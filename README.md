@@ -390,24 +390,11 @@ docker compose -f media.yml -f web.yml -f cloud.yml up -d
 The image includes zsh with automatic dotfiles setup:
 
 - **Zsh Shell**: Installed and configured as the default shell
-- **Dotfiles**: Automatically cloned from https://github.com/zoro11031/dotfiles on first boot
 - **Setup Service**: A systemd service (`dotfiles-setup.service`) runs once on first boot to:
-  - Clone the dotfiles repository to `/var/home/core/.dotfiles`
+  - Clone the dotfiles to `/var/home/core/.dotfiles`
   - Run the installation script to set up shell configuration
   - Install zsh configuration including `.zshrc` and Powerlevel10k theme
 
-The dotfiles are managed with GNU Stow and include configurations for:
-- Zsh with Powerlevel10k prompt
-- Vim/Neovim
-- Tmux
-- Git aliases and settings
-
-To manually re-run the dotfiles setup:
-```bash
-cd ~/.dotfiles
-git pull
-bash install.sh
-```
 
 ## Base Image
 
