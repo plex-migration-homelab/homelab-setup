@@ -100,7 +100,7 @@ It pulls media from the file server over NFS and exposes services to the interne
   - Installs `wireguard-tools`, `docker`, `nfs-utils`, `fail2ban`, `zsh`, and Intel VAAPI drivers.
   - Layers `/etc/wireguard/wg0.conf` (template) and systemd units.
   - Declares NFS mounts and a Compose service to start the stack at boot.
-  - Automatically sets up zsh with dotfiles from https://github.com/zoro11031/dotfiles on first boot.
+  - Copies an empty `.dotfiles` directory to the core user's home where you can place your dotfiles.
 
 ---
 
@@ -387,10 +387,10 @@ docker compose -f media.yml -f web.yml -f cloud.yml up -d
 
 ## Shell Configuration
 
-The image includes zsh with automatic dotfiles setup:
+The image includes zsh and a dotfiles directory:
 
 - **Zsh Shell**: Installed and configured as the default shell
-- **Setup Service**: A systemd service (`dotfiles-setup.service`) runs once on first boot to:
+- **Setup Service**: A systemd service (`home-directory-setup.service`) runs once on first boot to:
   - Clone the dotfiles to `/var/home/core/.dotfiles`
   - Run the installation script to set up shell configuration
   - Install zsh configuration including `.zshrc` and Powerlevel10k theme
