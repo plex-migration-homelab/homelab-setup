@@ -1,149 +1,103 @@
 # homelab-coreos-minipc &nbsp; [![build](https://github.com/zoro11031/homelab-coreos-minipc/actions/workflows/build.yml/badge.svg)](https://github.com/zoro11031/homelab-coreos-minipc/actions/workflows/build.yml)
 
-This repository defines the **frontend application node** for my homelab — a declarative **uCore (Ublue CoreOS)** build that runs all user-facing services on a NAB9 mini PC.
-It pulls media from the file server over NFS and exposes services to the internet via direct ports and a WireGuard-linked VPS.
+**Frontend application node** for my homelab — a declarative **uCore (Ublue CoreOS)** build running all user-facing services on a NAB9 mini PC.  
+Pulls media from the file server over NFS and exposes select services to the internet through a WireGuard-linked VPS.
 
 ---
 
 ## Purpose
 
-- Run Plex, Jellyfin, Nextcloud, Immich, Overseerr, Wizarr, etc.  
-- Handle all transcoding and outbound traffic to users.  
-- Keep state declarative and rebuildable with uCore + BlueBuild.  
-- Be the only node that has WAN ingress.
+- Host Plex, Jellyfin, Nextcloud, Immich, Overseerr, Wizarr, etc.  
+- Handle transcoding and external traffic.  
+- Stay reproducible via uCore + BlueBuild.  
+- Serve as the only WAN-exposed node.
 
 ---
 
 ## Stack Overview
 
-| Component               | Role                                     |
-|-------------------------|------------------------------------------|
-| uCore (Ublue CoreOS)    | Immutable base OS on the NAB9 mini PC   |
-| Podman Compose          | Orchestrates all app containers         |
-| WireGuard               | Connects to DigitalOcean VPS            |
-| Nginx Proxy Manager     | SSL / reverse proxy on VPS side         |
-| Fail2ban + firewall     | Protects exposed media / SSH ports      |
-| NFS client              | Mounts media from the file server       |
+| Component            | Role                                         |
+|----------------------|----------------------------------------------|
+| **uCore (Ublue CoreOS)** | Immutable host OS on NAB9 mini PC          |
+| **Podman Compose**   | Container orchestration                      |
+| **WireGuard**        | Encrypted tunnel to DigitalOcean VPS         |
+| **Nginx Proxy Manager** | Reverse proxy + SSL termination on VPS     |
+| **Fail2ban / Firewall** | Hardens SSH and media endpoints           |
+| **NFS Client**       | Mounts media from the backend file server    |
 
 ---
 
 ## Network Architecture
-
 ```
-                         Internet
-                            │
-        ┌───────────────────┴─────────────────────┐
-        │                                         │
-        ↓                                         ↓
+                     Internet
+                        │
+    ┌───────────────────┴─────────────────────┐
+    │                                         │
+    ↓                                         ↓
 ┌────────────────────────┐          Direct Ports 8096/8920 & 32400
 │   DigitalOcean VPS     │          (NAB9 Mini PC only)
 │  ┌──────────────────┐  │                     │
 │  │ Nginx Proxy      │  │                     │
-│  │ Manager          │  │                     │
-│  │ (SSL/reverse     │  │                     │
-│  │  proxy)          │  │                     │
-│  │ Routes:          │  │                     │
-│  │ • Overseerr      │  │                     │
-│  │ • Wizarr         │  │                     │
-│  │ • Nextcloud      │  │                     │
-│  │ • Immich         │  │                     │
-│  └──────────────────┘                      │
-             |                                 |
-             |                                 │                                  
-  WireGuard Tunnel (encrypted)                 │
+│  │ Manager (SSL)    │  │                     │
+│  │ Routes: Overseerr│  │                     │
+│  │ Wizarr / Immich  │  │                     │
+│  │ Nextcloud        │  │                     │
+│  └──────────────────┘  │                     │
+│                        │                     │
+│   WireGuard Tunnel     │                     │
+│    (encrypted)         │                     │
+└────────────┬───────────┘                     │
              │                                 │
              ↓                                 │
-   ┌────────────────────────────────────────────┴─────────────┐
-   │                NAB9 Mini PC (Ublue CoreOS)               │
-   │                (Frontend / User-Facing)                  │
-   │  ┌────────────────────────────────────────────────────┐  │
-   │  │                                                    │  │
-   │  │ • Podman Stack                                     │  │
-   │  │ • Jellyfin (direct exposure)                       │  │
-   │  │ • Plex (direct exposure)                           │  │
-   │  │ • Overseerr / Wizarr / Nextcloud / Immich (via     │  │
-   │  │   VPS)                                             │  │
-   │  └────────────────────────────────────────────────────┘  │
-   └───────────────┬──────────────────────────────────────────┘
-                   │
-             (Direct LAN Connection)
-                   │
-                   ↓
-      ┌─────────────────────────────────────────┐
-      │      File Server (Ublue CoreOS)         │
-      │      (Backend / Storage & Automation)   │
-      │  ┌───────────────────────────────────┐  │
-      │  │ • SnapRAID + mergerfs             │  │
-      │  │ • NFS Server (192.168.7.x)        │  │
-      │  │ • Sonarr / Radarr / Lidarr        │  │
-      │  │ • Prowlarr                        │  │
-      │  │ • qBittorrent + VPN (outbound)    │  │
-      │  │ • Outbound downloads via pfSense  │  │
-      │  │ • No inbound exposure (LAN only)  │  │
-      │  └───────────────────────────────────┘  │
-      └─────────────────────────────────────────┘
-                   │
-                   ↓
-              DAS Storage
-        (18-19 data disks + parity)
+┌────────────────────────────────────────────┴─────────────┐
+│              NAB9 Mini PC (uCore Frontend)               │
+│  • Podman stack: Jellyfin, Plex, Overseerr, Wizarr, etc. │
+│  • Direct exposure for Jellyfin/Plex                     │
+│  • WAN ingress via VPS                                   │
+└───────────────┬──────────────────────────────────────────┘
+                │
+         LAN (NFS Access)
+                │
+                ↓
+┌─────────────────────────────────────────┐
+│      File Server (Ublue CoreOS)         │
+│  • SnapRAID + mergerfs / NFS / qBittorrentVPN |
+│  • Sonarr / Radarr / Lidarr / Prowlarr       │
+│  • LAN-only access                           │
+└─────────────────────────────────────────┘
+                │
+                ↓
+          DAS Storage
 ```
 
 ---
 
 ## Declarative Build
 
-### Base Image
+**Base Image:** [uCore (Ublue CoreOS)](https://github.com/ublue-os/ucore)  
+**Custom Image:** `ghcr.io/<user>/homelab-coreos-minipc:latest`
 
-- Base: https://github.com/ublue-os/ucore
-- Custom image: `ghcr.io/<user>/homelab-coreos-minipc:latest`
-- Built with a BlueBuild recipe that:
-  - Installs `wireguard-tools`, `podman`, `nfs-utils`, `fail2ban`, `zsh`, and Intel VAAPI drivers.
-  - Layers `/etc/wireguard/wg0.conf` (template) and systemd units.
-  - Declares NFS mounts and a Compose service to start the stack at boot.
-  - Copies an empty `.dotfiles` directory to the core user's home where you can place your dotfiles.
+Built with **BlueBuild** to include:
+
+- `wireguard-tools`, `podman`, `nfs-utils`, `fail2ban`, `zsh`, Intel VAAPI drivers  
+- Predefined systemd units for NFS mounts, WireGuard, and container startup  
+- Template for `/etc/wireguard/wg0.conf`  
+- Empty `.dotfiles/` directory under `core` user for local customization  
 
 ---
 
-## Services
+## Core Services
 
-### Media & Frontend Apps
+| Service | Function | Access |
+|----------|-----------|--------|
+| **Plex** | Media server, Intel QuickSync HW transcoding | Direct port `32400` |
+| **Jellyfin** | Open-source media server | Direct ports `8096/8920` |
+| **Overseerr** | Media request manager | via VPS proxy |
+| **Wizarr** | Invite automation | via VPS proxy |
+| **Nextcloud** | Cloud + Collabora + Redis + PostgreSQL | via VPS proxy |
+| **Immich** | Photo/video backup | via VPS proxy |
 
-- **Plex** — direct port `32400`, hardware transcoding via Intel QuickSync.  
-- **Jellyfin** — direct port `8096` (and optional `8920` for HTTPS).  
-- **Overseerr** — media request management, accessed via VPS hostname.  
-- **Wizarr** — automated Plex/Jellyfin invite handling.  
-- **Nextcloud** — personal cloud and groupware with PostgreSQL, Redis, and Collabora.  
-- **Immich** — photo and video backup platform.
-
-All of these are defined in a compose file such as `compose/minipc.yml` in this repo.
-
-Example structure (conceptual):
-
-    version: "3.9"
-    services:
-      plex:
-        image: lscr.io/linuxserver/plex
-        network_mode: host
-        devices:
-          - /dev/dri:/dev/dri
-        volumes:
-          - /mnt/nas-media:/media:ro
-          - ./config/plex:/config
-
-      jellyfin:
-        image: lscr.io/linuxserver/jellyfin
-        ports: ["8096:8096"]
-        devices:
-          - /dev/dri:/dev/dri
-        volumes:
-          - /mnt/nas-media:/media:ro
-          - ./config/jellyfin:/config
-
-      overseerr:
-        image: lscr.io/linuxserver/overseerr
-        ports: ["5055:5055"]
-        volumes:
-          - ./config/overseerr:/config
+All containers are defined in `compose/minipc.yml`.
 
 ---
 
@@ -151,225 +105,79 @@ Example structure (conceptual):
 
 ### WireGuard
 
-The mini PC acts as a WireGuard server with the following configuration:
+The mini PC runs as a WireGuard server.
 
-- **Server**: `10.253.0.1/24` (NAB9 mini PC)
-- **Listen Port**: `51820`
-- **Network**: `10.253.0.0/24`
-
-**Configured Peers**:
-- LAN-Desktop-Justin: `10.253.0.6/32`
-- VPS: `10.253.0.8/32`
-- iPhone: `10.253.0.9/32`
-- Framework Laptop Justin: `10.253.0.11/32`
-
-Config template is in `config/wireguard/wg0.conf.template`. Use the setup scripts in `files/setup_scripts/` to generate keys and deploy to `/etc/wireguard/wg0.conf`. The service autostarts with `wg-quick@wg0.service`.
+- **Server:** `10.253.0.1/24`  
+- **Port:** `51820`  
+- **Peers:** VPS, personal devices, LAN nodes  
+- Template: `config/wireguard/wg0.conf.template`  
+- Service: `wg-quick@wg0.service` (autostart)
 
 ### NFS Mounts
 
-Example `/etc/fstab` entries:
-
-    192.168.7.10:/mnt/storage/Media      /mnt/nas-media      nfs  defaults,ro  0 0
-    192.168.7.10:/mnt/storage/Nextcloud  /mnt/nas-nextcloud  nfs  defaults,ro  0 0
-    192.168.7.10:/mnt/storage/Photos     /mnt/nas-photos     nfs  defaults,ro  0 0
-
-These mounts are used by Plex, Jellyfin, Nextcloud, Immich, etc.
-
----
-
-## Ignition Setup (First-Time Installation)
-
-Every CoreOS-family install expects an Ignition configuration on the very first boot.
-Without one, you cannot set a password or SSH key for the default `core` user.
-Follow the steps below **before** you boot any installer media.
-
-### Prerequisites
-
-- [`butane`](https://coreos.github.io/butane/) in your `$PATH` (used by `transpile.sh`)
-- `mkpasswd` (from the `whois` package on Debian/Ubuntu) to generate a password hash
-- An SSH key pair on the machine you're using to prepare the config
-
-### Quick Setup
-
-1. Navigate to the Ignition helpers and copy the template:
-   ```bash
-   cd ignition
-   cp config.bu.template config.bu
-   ```
-
-2. Generate a password hash for the `core` user:
-   ```bash
-   ./generate-password-hash.sh
-   ```
-   Copy the printed yescrypt hash.
-
-3. Edit `config.bu` and replace the placeholders:
-   - `YOUR_GOOD_PASSWORD_HASH_HERE` → the hash from step 2
-   - `YOUR_SSH_PUB_KEY_HERE` → your SSH public key (`~/.ssh/id_ed25519.pub`, etc.)
-   - Adjust hostname, groups, or additional settings if needed
-
-4. Convert the Butane file to Ignition JSON:
-   ```bash
-   ./transpile.sh config.bu config.ign
-   ```
-   The script validates that you removed the placeholders and writes `config.ign`.
-
-5. Keep `config.ign` handy for the installation method you plan to use (see below).
-
-**Automatic rebase behavior:** the bundled Butane template adds systemd units that move the host from stock Fedora CoreOS to the signed `ghcr.io/zoro11031/homelab-coreos-minipc:latest` image. Expect **two automatic reboots** after the first boot: one into the unsigned OCI reference and a second into the signed image. This is normal and confirms the autorebase workflow is active.
-
-Using a custom ISO built from the final image (`bluebuild generate-iso ... image ghcr.io/zoro11031/homelab-coreos-minipc`)?
-Remove the autorebase units before running `transpile.sh`; otherwise you will sit through two unnecessary reboots.
-Detailed instructions live in [`ignition/README.md`](ignition/README.md#disabling-the-automatic-rebase-units).
+Configured under `/etc/fstab` for media access, e.g.:
+```
+192.168.7.10:/mnt/storage/Media      /mnt/nas-media      nfs  defaults,ro  0 0
+192.168.7.10:/mnt/storage/Nextcloud  /mnt/nas-nextcloud  nfs  defaults,ro  0 0
+192.168.7.10:/mnt/storage/Photos     /mnt/nas-photos     nfs  defaults,ro  0 0
+```
 
 ---
 
 ## Installation
 
-### Option A: Install via Fedora CoreOS Live ISO (Recommended)
+### Option A — Fedora CoreOS ISO (Recommended)
 
-1. **Finish the Ignition steps above** so you have a customized `config.ign`.
-
-2. **Download the latest Fedora CoreOS installer ISO** from the [official site](https://fedoraproject.org/coreos/download/) or with the containerized helper:
-   ```bash
-   podman run --security-opt label=disable --pull=always --rm -v "$(pwd)":/data -w /data \
-       quay.io/coreos/coreos-installer:release download -s stable -p metal -f iso
-   ```
-
-3. **Write the ISO to removable media**:
-   - Linux/macOS: `sudo dd if=fedora-coreos.iso of=/dev/sdX bs=4M status=progress oflag=sync`
-   - Windows: flash with [Rufus](https://rufus.ie/) using “DD Image” mode
-
-4. **Boot the target machine** from the live ISO and open a shell prompt.
-
-5. **Install to disk using your Ignition file** (mounted from USB, fetched via network, or copied into `/root`):
-   ```bash
+1. Generate Ignition file using the `ignition/config.bu.template` and helper scripts.  
+2. Download Fedora CoreOS ISO:  
+```bash
+   podman run --rm -v "$(pwd)":/data quay.io/coreos/coreos-installer:release download -s stable -p metal -f iso
+```
+3. Flash ISO to USB (`dd` or Rufus).
+4. Boot target machine and run:
+```bash
    sudo coreos-installer install /dev/sda --ignition-file /path/to/config.ign
-   ```
-   Swap `/dev/sda` for the actual target device (e.g. `/dev/nvme0n1`).
-   Use `--ignition-url` if your config is hosted remotely.
+```
+5. Reboot. System will provision, then automatically rebase into `homelab-coreos-minipc` image.
 
-6. **Reboot** once the installer reports success:
-   ```bash
-   sudo reboot
-   ```
+### Option B — Prebuilt Custom ISO
 
-7. **Let the first boot complete**. Ignition provisions the host, then the autorebase services trigger the two expected reboots described above. After the second restart you land on the signed `homelab-coreos-minipc` image.
-
----
-
-### Option B: Generate a Custom ISO (Advanced Workflow)
-
-If you want a standalone ISO that already contains your custom image:
-
-1. Build or reference your image:
-   ```bash
-   sudo bluebuild generate-iso --iso-name homelab-coreos-minipc.iso \
-     image ghcr.io/zoro11031/homelab-coreos-minipc
-   ```
-
-   Or from a local recipe:
-   ```bash
-   sudo bluebuild generate-iso --iso-name homelab-coreos-minipc.iso \
-     recipe recipe.yml
-   ```
-
-2. **Do not use `coreos-installer iso ignition embed`** on uCore or uBlue-generated ISOs —
-   they are not CoreOS live ISOs and do not support embedding.
-   Use the installer-based Ignition method from Option A instead.
-
-3. Flash your ISO with Fedora Media Writer, Ventoy, or `dd`, and boot.
+Build with BlueBuild:
+```bash
+sudo bluebuild generate-iso --iso-name homelab-coreos-minipc.iso \
+  image ghcr.io/zoro11031/homelab-coreos-minipc
+```
 
 ---
 
-### Summary of Behavior
+## Post-Install Setup
 
-| Scenario                   | Ignition Used | Automatic Rebase | Manual Steps           |
-|----------------------------|---------------|------------------|------------------------|
-| Fresh install via FCOS ISO | ✅            | ✅               | None — fully automated |
-| Custom uCore ISO install   | ❌            | N/A              | Already final image    |
+1. Configure WireGuard peers and keys.
+2. Mount NFS shares for media and appdata.
+3. Place compose files under `/srv/containers/`.
+4. Start stack via systemd unit or Podman Compose.
+5. Confirm WAN routing via VPS (reverse proxy).
+
+Detailed instructions live in the [Setup Wiki](../../wiki/Setup).
 
 ---
 
 ## Updates & Rollbacks
-
-### Update the OS
-
 ```bash
-sudo rpm-ostree upgrade
-sudo systemctl reboot
-```
-
-### Rollback
-
-If something goes sideways:
-
-```bash
-rpm-ostree rollback
+sudo rpm-ostree upgrade && sudo systemctl reboot     # Update OS
+sudo rpm-ostree rollback                             # Revert last deployment
 ```
 
 ---
 
-## Security
+## Boot Sequence
 
-- Only Plex and Jellyfin ports are forwarded from WAN to the mini PC.  
-- All other applications are reached through the VPS (WireGuard + NPM).  
-- Fail2ban blocks repeated offenders on SSH and media ports.  
-- Secrets (`.env`, WireGuard keys, Cloudflare tokens) are kept out of Git.  
-- Firewall rules allow only what the stack actually uses.
+1. WireGuard link established
+2. NFS mounts activated
+3. Compose stack launched
+4. Health timers run checks and log status
 
 ---
 
-## Reboot Behavior
-
-On boot:
-
-1. WireGuard connects to the VPS.  
-2. NFS mounts are brought up under `/mnt/nas-*`.  
-3. The media stack starts via the Compose systemd service.  
-4. Optional timers run health checks and log status.
-
-## Setup
-
-For detailed setup instructions after installation, see the **[Setup Guide Wiki](../../wiki/Setup)**.
-
-The wiki includes comprehensive instructions for:
-
-- **User Setup**: Creating a dedicated user for managing containers
-- **Directory Structure**: Organizing compose files and application data
-- **WireGuard Configuration**: Setting up VPN connectivity and peer configs
-- **NFS Mounts**: Configuring network storage mounts
-- **Container Deployment**: Using Podman Compose or Docker with systemd integration
-
-### Quick Start
-
-After installation, the basic setup workflow is:
-
-1. Configure WireGuard keys and deploy the configuration
-2. Set up NFS mounts for media storage
-3. Create directory structure for compose files and appdata
-4. Deploy container services with Podman Compose or Docker
-5. Enable systemd services for auto-start on boot
-
-See the [Setup Guide Wiki](../../wiki/Setup) for detailed step-by-step instructions.
-
-## Network
-
-- Direct access: Plex (32400), Jellyfin (8096/8920)
-- WireGuard VPN: Server on 10.253.0.0/24 for remote access and VPS tunnel
-- NFS: Media from 192.168.7.10
-
-## Shell Configuration
-
-The image includes zsh and a dotfiles directory:
-
-- **Zsh Shell**: Installed and configured as the default shell
-- **Setup Service**: A systemd service (`home-directory-setup.service`) runs once on first boot to:
-  - Clone the dotfiles to `/var/home/core/.dotfiles`
-  - Run the installation script to set up shell configuration
-  - Install zsh configuration including `.zshrc` and Powerlevel10k theme
-
-
-## Base Image
-
-Built on `ghcr.io/ublue-os/ucore:latest` with WireGuard, NFS, zsh, and Intel media drivers.
+**Base:** `ghcr.io/ublue-os/ucore:latest`  
+**Extensions:** WireGuard, NFS, zsh, fail2ban, Intel media stack
