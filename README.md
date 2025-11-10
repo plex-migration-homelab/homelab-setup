@@ -75,7 +75,7 @@ Pulls media from the file server over NFS and exposes select services to the int
 ## Declarative Build
 
 **Base Image:** [uCore (Ublue CoreOS)](https://github.com/ublue-os/ucore)  
-**Custom Image:** `ghcr.io/<user>/homelab-coreos-minipc:latest`
+**Custom Image:** `ghcr.io/zoro11031/homelab-coreos-minipc:latest`
 
 Built with **BlueBuild** to include:
 
