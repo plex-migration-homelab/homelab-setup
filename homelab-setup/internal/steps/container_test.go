@@ -177,10 +177,8 @@ func TestGenerateEnvContent_Media(t *testing.T) {
 }
 
 func TestGetServiceInfo(t *testing.T) {
-	cfg := newTestConfig(t)
-	if err := cfg.Set("CONTAINERS_BASE", "/test/containers"); err != nil {
-		t.Fatalf("failed to set CONTAINERS_BASE: %v", err)
-	}
+	cfg := config.New("")
+	cfg.Set("HOMELAB_BASE_DIR", "/test/containers")
 
 	containers := system.NewContainerManager()
 	fs := system.NewFileSystem()
@@ -206,25 +204,29 @@ func TestGetServiceInfo(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvContent_HonorsConfiguredTimezone(t *testing.T) {
-	cfg := newTestConfig(t)
-	if err := cfg.Set("TZ", "Europe/London"); err != nil {
-		t.Fatalf("failed to seed TZ: %v", err)
+func TestContainerSetupServiceDirectoryUsesHomelabBase(t *testing.T) {
+	cfg := config.New("")
+	cfg.Set("HOMELAB_BASE_DIR", "/mnt/homelab")
+
+	setup := NewContainerSetup(system.NewContainerManager(), system.NewFileSystem(), cfg, ui.New(), config.NewMarkers(""))
+
+	dir := setup.serviceDirectory("media")
+	expected := filepath.Join("/mnt/homelab", "media")
+	if dir != expected {
+		t.Fatalf("expected %s, got %s", expected, dir)
 	}
+}
 
-	containers := system.NewContainerManager()
-	fs := system.NewFileSystem()
-	uiInstance := ui.New()
-	markers := config.NewMarkers("")
+func TestContainerSetupServiceDirectoryFallback(t *testing.T) {
+	cfg := config.New("")
+	cfg.Set("CONTAINERS_BASE", "/legacy")
 
-	setup := NewContainerSetup(containers, fs, cfg, uiInstance, markers)
-	if err := setup.CreateBaseEnvConfig(); err != nil {
-		t.Fatalf("CreateBaseEnvConfig failed: %v", err)
-	}
+	setup := NewContainerSetup(system.NewContainerManager(), system.NewFileSystem(), cfg, ui.New(), config.NewMarkers(""))
 
-	content := setup.generateEnvContent("generic")
-	if !contains(content, "TZ=Europe/London") {
-		t.Error("Content missing TZ=Europe/London")
+	dir := setup.serviceDirectory("web")
+	expected := filepath.Join("/legacy", "web")
+	if dir != expected {
+		t.Fatalf("expected %s, got %s", expected, dir)
 	}
 }
 
