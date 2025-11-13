@@ -10,6 +10,8 @@ import (
 	"github.com/zoro11031/homelab-coreos-minipc/homelab-setup/internal/ui"
 )
 
+const defaultTimezone = "America/Chicago"
+
 // UserConfigurator handles user and group configuration
 type UserConfigurator struct {
 	users   *system.UserManager
@@ -260,15 +262,28 @@ func (u *UserConfigurator) SetupShell(username string) error {
 func (u *UserConfigurator) GetTimezoneInfo() error {
 	tz, err := system.GetTimezone()
 	if err != nil {
-		u.ui.Warning(fmt.Sprintf("Could not determine timezone: %v", err))
-		return nil
-	}
+		if loadErr := u.config.Load(); loadErr != nil {
+			u.ui.Warning(fmt.Sprintf("Could not load existing timezone configuration (defaulting to %s): %v", defaultTimezone, loadErr))
+		}
 
-	u.ui.Infof("System timezone: %s", tz)
+		fallback := u.config.GetOrDefault("TZ", "")
+		if fallback == "" {
+			fallback = defaultTimezone
+		}
+
+		u.ui.Warning(fmt.Sprintf("Could not determine timezone automatically (using %s): %v", fallback, err))
+		tz = fallback
+		u.ui.Infof("Using timezone: %s", tz)
+	} else {
+		u.ui.Infof("System timezone: %s", tz)
+	}
 
 	// Save timezone to config for later use
 	if err := u.config.Set("TIMEZONE", tz); err != nil {
 		return fmt.Errorf("failed to save timezone to config: %w", err)
+	}
+	if err := u.config.Set("TZ", tz); err != nil {
+		return fmt.Errorf("failed to save TZ to config: %w", err)
 	}
 
 	return nil
