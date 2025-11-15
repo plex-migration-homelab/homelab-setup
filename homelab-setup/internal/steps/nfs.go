@@ -241,11 +241,11 @@ func (n *NFSConfigurator) AddToFstab(host, export, mountPoint string) error {
 		if err := n.fs.WriteFile(fstabPath, []byte(builder.String()), 0644); err != nil {
 			return fmt.Errorf("failed to update %s: %w", fstabPath, err)
 		}
-		w := "fstab entry"
+		successMessage := "fstab entry"
 		if fstabPath != "/etc/fstab" {
-			w = fmt.Sprintf("fstab entry in %s", fstabPath)
+			successMessage = fmt.Sprintf("fstab entry in %s", fstabPath)
 		}
-		n.ui.Success(fmt.Sprintf("Created %s", w))
+		n.ui.Success(fmt.Sprintf("Created %s", successMessage))
 	}
 
 	if output, err := n.runner.Run("sudo", "-n", "systemctl", "daemon-reload"); err != nil {

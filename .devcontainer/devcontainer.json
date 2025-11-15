@@ -22,5 +22,5 @@
 			}
 		}
 	},
-	"postCreateCommand": "cd homelab-setup && go mod download && go install golang.org/x/tools/gopls@latest"
+	"postCreateCommand": "cd homelab-setup && go mod download && golangci-lint cache clean"
 }

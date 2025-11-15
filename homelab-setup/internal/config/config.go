@@ -16,6 +16,14 @@ type Config struct {
 	loaded   bool // Track if configuration has been loaded from disk
 }
 
+// ensureLoaded loads configuration data from disk once before read operations
+func (c *Config) ensureLoaded() error {
+	if c.loaded {
+		return nil
+	}
+	return c.Load()
+}
+
 // New creates a new Config instance
 func New(filePath string) *Config {
 	if filePath == "" {
@@ -126,6 +134,9 @@ func (c *Config) Save() error {
 
 // Get retrieves a configuration value
 func (c *Config) Get(key string) (string, error) {
+	if err := c.ensureLoaded(); err != nil {
+		return "", fmt.Errorf("failed to load config: %w", err)
+	}
 	value, exists := c.data[key]
 	if !exists {
 		return "", fmt.Errorf("config key not found: %s", key)
@@ -135,6 +146,9 @@ func (c *Config) Get(key string) (string, error) {
 
 // GetOrDefault retrieves a value or returns default if not found
 func (c *Config) GetOrDefault(key, defaultValue string) string {
+	if err := c.ensureLoaded(); err != nil {
+		return defaultValue
+	}
 	if value, exists := c.data[key]; exists {
 		return value
 	}
@@ -157,12 +171,18 @@ func (c *Config) Set(key, value string) error {
 
 // Exists checks if a key exists
 func (c *Config) Exists(key string) bool {
+	if err := c.ensureLoaded(); err != nil {
+		return false
+	}
 	_, exists := c.data[key]
 	return exists
 }
 
 // GetAll returns all configuration data
 func (c *Config) GetAll() map[string]string {
+	if err := c.ensureLoaded(); err != nil {
+		return map[string]string{}
+	}
 	// Return a copy to prevent external modification
 	result := make(map[string]string, len(c.data))
 	for k, v := range c.data {

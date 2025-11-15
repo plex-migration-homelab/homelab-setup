@@ -49,7 +49,7 @@ func (m *Menu) Show() error {
 			m.ctx.UI.Error(fmt.Sprintf("%v", err))
 			m.ctx.UI.Print("")
 			m.ctx.UI.Info("Press Enter to continue...")
-			fmt.Scanln()
+			_, _ = fmt.Scanln()
 		}
 	}
 }
@@ -166,7 +166,7 @@ func (m *Menu) runAllSteps(skipWireGuard bool) error {
 
 	fmt.Println()
 	m.ctx.UI.Info("Press Enter to return to menu...")
-	fmt.Scanln()
+	_, _ = fmt.Scanln()
 
 	return err
 }
@@ -189,7 +189,7 @@ func (m *Menu) runIndividualStep(choice string) error {
 
 	fmt.Println()
 	m.ctx.UI.Info("Press Enter to return to menu...")
-	fmt.Scanln()
+	_, _ = fmt.Scanln()
 
 	return err
 }
@@ -204,7 +204,7 @@ func (m *Menu) runTroubleshoot() error {
 
 	fmt.Println()
 	m.ctx.UI.Info("Press Enter to return to menu...")
-	fmt.Scanln()
+	_, _ = fmt.Scanln()
 
 	return nil
 }
@@ -249,7 +249,7 @@ func (m *Menu) showStatus() error {
 
 	fmt.Println()
 	m.ctx.UI.Info("Press Enter to return to menu...")
-	fmt.Scanln()
+	_, _ = fmt.Scanln()
 
 	return nil
 }
@@ -272,7 +272,7 @@ func (m *Menu) resetSetup() error {
 		m.ctx.UI.Info("Reset cancelled")
 		fmt.Println()
 		m.ctx.UI.Info("Press Enter to return to menu...")
-		fmt.Scanln()
+		_, _ = fmt.Scanln()
 		return nil
 	}
 
@@ -285,7 +285,7 @@ func (m *Menu) resetSetup() error {
 
 	fmt.Println()
 	m.ctx.UI.Info("Press Enter to return to menu...")
-	fmt.Scanln()
+	_, _ = fmt.Scanln()
 
 	return nil
 }
@@ -369,7 +369,7 @@ For more information, see the project README.
 
 	fmt.Println(help)
 	m.ctx.UI.Info("Press Enter to return to menu...")
-	fmt.Scanln()
+	_, _ = fmt.Scanln()
 
 	return nil
 }

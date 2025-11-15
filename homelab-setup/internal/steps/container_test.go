@@ -3,6 +3,7 @@ package steps
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zoro11031/homelab-coreos-minipc/homelab-setup/internal/config"
@@ -120,16 +121,16 @@ func TestGenerateEnvContent(t *testing.T) {
 	}
 
 	// Check that base variables are present
-	if !contains(content, "PUID=1001") {
+	if !strings.Contains(content, "PUID=1001") {
 		t.Error("Content missing PUID=1001")
 	}
-	if !contains(content, "PGID=1002") {
+	if !strings.Contains(content, "PGID=1002") {
 		t.Error("Content missing PGID=1002")
 	}
-	if !contains(content, "TZ=America/New_York") {
+	if !strings.Contains(content, "TZ=America/New_York") {
 		t.Error("Content missing TZ=America/New_York")
 	}
-	if !contains(content, "APPDATA_PATH=/custom/path") {
+	if !strings.Contains(content, "APPDATA_PATH=/custom/path") {
 		t.Error("Content missing APPDATA_PATH=/custom/path")
 	}
 }
@@ -165,20 +166,22 @@ func TestGenerateEnvContent_Media(t *testing.T) {
 	content := setup.generateEnvContent("media")
 
 	// Check media-specific variables
-	if !contains(content, "PLEX_CLAIM_TOKEN=claim-test-token") {
+	if !strings.Contains(content, "PLEX_CLAIM_TOKEN=claim-test-token") {
 		t.Error("Content missing PLEX_CLAIM_TOKEN")
 	}
-	if !contains(content, "JELLYFIN_PUBLIC_URL=https://jellyfin.example.com") {
+	if !strings.Contains(content, "JELLYFIN_PUBLIC_URL=https://jellyfin.example.com") {
 		t.Error("Content missing JELLYFIN_PUBLIC_URL")
 	}
-	if !contains(content, "TRANSCODE_DEVICE=/dev/dri") {
+	if !strings.Contains(content, "TRANSCODE_DEVICE=/dev/dri") {
 		t.Error("Content missing TRANSCODE_DEVICE")
 	}
 }
 
 func TestGetServiceInfo(t *testing.T) {
 	cfg := newTestConfig(t)
-	cfg.Set("HOMELAB_BASE_DIR", "/test/containers")
+	if err := cfg.Set("HOMELAB_BASE_DIR", "/test/containers"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
 
 	containers := system.NewContainerManager()
 	fs := system.NewFileSystem()
@@ -206,7 +209,9 @@ func TestGetServiceInfo(t *testing.T) {
 
 func TestContainerSetupServiceDirectoryUsesHomelabBase(t *testing.T) {
 	cfg := newTestConfig(t)
-	cfg.Set("HOMELAB_BASE_DIR", "/mnt/homelab")
+	if err := cfg.Set("HOMELAB_BASE_DIR", "/mnt/homelab"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
 
 	setup := NewContainerSetup(system.NewContainerManager(), system.NewFileSystem(), cfg, ui.New(), config.NewMarkers(""))
 
@@ -219,7 +224,9 @@ func TestContainerSetupServiceDirectoryUsesHomelabBase(t *testing.T) {
 
 func TestContainerSetupServiceDirectoryFallback(t *testing.T) {
 	cfg := newTestConfig(t)
-	cfg.Set("CONTAINERS_BASE", "/legacy")
+	if err := cfg.Set("CONTAINERS_BASE", "/legacy"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
 
 	setup := NewContainerSetup(system.NewContainerManager(), system.NewFileSystem(), cfg, ui.New(), config.NewMarkers(""))
 
@@ -228,18 +235,4 @@ func TestContainerSetupServiceDirectoryFallback(t *testing.T) {
 	if dir != expected {
 		t.Fatalf("expected %s, got %s", expected, dir)
 	}
-}
-
-// Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

@@ -43,7 +43,9 @@ func TestConfigGet(t *testing.T) {
 	cfg := New(filepath.Join(tmpDir, "test.conf"))
 
 	// Set a value
-	cfg.Set("KEY1", "value1")
+	if err := cfg.Set("KEY1", "value1"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
 
 	// Test Get for existing key
 	val, err := cfg.Get("KEY1")
@@ -72,7 +74,9 @@ func TestConfigGetOrDefault(t *testing.T) {
 	}
 
 	// Set a value and test
-	cfg.Set("KEY1", "value1")
+	if err := cfg.Set("KEY1", "value1"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
 	val = cfg.GetOrDefault("KEY1", "default")
 	if val != "value1" {
 		t.Errorf("GetOrDefault() = %v, want %v", val, "value1")
@@ -89,7 +93,9 @@ func TestConfigExists(t *testing.T) {
 	}
 
 	// Set a value and test
-	cfg.Set("KEY1", "value1")
+	if err := cfg.Set("KEY1", "value1"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
 	if !cfg.Exists("KEY1") {
 		t.Error("Exists() = false, want true for existing key")
 	}
@@ -100,12 +106,16 @@ func TestConfigDelete(t *testing.T) {
 	cfg := New(filepath.Join(tmpDir, "test.conf"))
 
 	// Set and delete
-	cfg.Set("KEY1", "value1")
+	if err := cfg.Set("KEY1", "value1"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
 	if !cfg.Exists("KEY1") {
 		t.Error("Key should exist after Set()")
 	}
 
-	cfg.Delete("KEY1")
+	if err := cfg.Delete("KEY1"); err != nil {
+		t.Fatalf("Delete() failed: %v", err)
+	}
 	if cfg.Exists("KEY1") {
 		t.Error("Key should not exist after Delete()")
 	}
@@ -128,5 +138,32 @@ func TestConfigFilePath(t *testing.T) {
 
 	if cfg.FilePath() != expectedPath {
 		t.Errorf("FilePath() = %v, want %v", cfg.FilePath(), expectedPath)
+	}
+}
+
+func TestConfigLazyLoadOnRead(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "lazy.conf")
+
+	writer := New(configPath)
+	if err := writer.Set("LAZY_KEY", "lazy_value"); err != nil {
+		t.Fatalf("Set() failed: %v", err)
+	}
+
+	reader := New(configPath)
+	val, err := reader.Get("LAZY_KEY")
+	if err != nil {
+		t.Fatalf("Get() returned error: %v", err)
+	}
+	if val != "lazy_value" {
+		t.Errorf("Get() = %v, want lazy_value", val)
+	}
+
+	if got := reader.GetOrDefault("LAZY_KEY", "default"); got != "lazy_value" {
+		t.Errorf("GetOrDefault() = %v, want lazy_value", got)
+	}
+
+	if !reader.Exists("LAZY_KEY") {
+		t.Errorf("Exists() = false, want true")
 	}
 }

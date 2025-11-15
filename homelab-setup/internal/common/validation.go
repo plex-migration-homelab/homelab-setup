@@ -37,6 +37,24 @@ func ValidatePort(port string) error {
 	return nil
 }
 
+// ValidateCIDR validates an IPv4 CIDR block such as 10.0.0.1/24
+func ValidateCIDR(cidr string) error {
+	if cidr == "" {
+		return fmt.Errorf("CIDR cannot be empty")
+	}
+	ip, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("invalid CIDR: %s", cidr)
+	}
+	if ip.To4() == nil {
+		return fmt.Errorf("CIDR must be IPv4: %s", cidr)
+	}
+	if network == nil {
+		return fmt.Errorf("invalid CIDR network: %s", cidr)
+	}
+	return nil
+}
+
 // ValidatePath validates that a path is absolute
 func ValidatePath(path string) error {
 	if path == "" {

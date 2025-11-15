@@ -127,6 +127,29 @@ func TestValidateSafePath(t *testing.T) {
 	}
 }
 
+func TestValidateCIDR(t *testing.T) {
+	tests := []struct {
+		name    string
+		cidr    string
+		wantErr bool
+	}{
+		{"valid cidr", "10.0.0.1/24", false},
+		{"valid host mask", "192.168.1.10/32", false},
+		{"invalid empty", "", true},
+		{"invalid format", "192.168.1.1", true},
+		{"invalid ipv6", "2001:db8::1/64", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCIDR(tt.cidr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCIDR() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateUsername(t *testing.T) {
 	tests := []struct {
 		name     string

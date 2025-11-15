@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/zoro11031/homelab-coreos-minipc/homelab-setup/internal/config"
@@ -43,7 +44,7 @@ func TestNewDeployment(t *testing.T) {
 }
 
 func TestGetSelectedServices(t *testing.T) {
-	cfg := config.New("")
+	cfg := config.New(filepath.Join(t.TempDir(), "config.conf"))
 
 	containers := system.NewContainerManager()
 	fs := system.NewFileSystem()
@@ -60,7 +61,9 @@ func TestGetSelectedServices(t *testing.T) {
 	}
 
 	// Test with services selected
-	cfg.Set("SELECTED_SERVICES", "media web cloud")
+	if err := cfg.Set("SELECTED_SERVICES", "media web cloud"); err != nil {
+		t.Fatalf("Failed to set SELECTED_SERVICES: %v", err)
+	}
 	selectedServices, err := deployment.GetSelectedServices()
 	if err != nil {
 		t.Fatalf("GetSelectedServices failed: %v", err)

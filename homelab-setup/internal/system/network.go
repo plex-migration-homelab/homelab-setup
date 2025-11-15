@@ -135,7 +135,7 @@ func (n *Network) GetAllInterfaces() ([]string, error) {
 
 // IsPortOpen checks if a TCP port is open on a host
 func (n *Network) IsPortOpen(host string, port int, timeoutSeconds int) (bool, error) {
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	timeout := time.Duration(timeoutSeconds) * time.Second
 
 	conn, err := net.DialTimeout("tcp", address, timeout)
@@ -164,7 +164,7 @@ func (n *Network) ResolveDNS(hostname string) ([]string, error) {
 
 // TestTCPConnection tests if a TCP connection can be established
 func (n *Network) TestTCPConnection(host string, port int) (bool, error) {
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
 		return false, nil

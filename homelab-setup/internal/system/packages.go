@@ -8,17 +8,12 @@ import (
 
 // PackageManager handles package operations on immutable systems
 type PackageManager struct {
-	// Cache of installed packages for performance
-	installedCache map[string]bool
-	cacheLoaded    bool
+	// No internal state needed - all operations are stateless
 }
 
 // NewPackageManager creates a new PackageManager instance
 func NewPackageManager() *PackageManager {
-	return &PackageManager{
-		installedCache: make(map[string]bool),
-		cacheLoaded:    false,
-	}
+	return &PackageManager{}
 }
 
 // IsInstalled checks if a package is installed

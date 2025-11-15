@@ -438,9 +438,7 @@ func checkNFSMounts(ctx *cli.SetupContext) {
 
 			// Get mount unit name
 			escapedPath := strings.ReplaceAll(mount, "/", "-")
-			if strings.HasPrefix(escapedPath, "-") {
-				escapedPath = escapedPath[1:]
-			}
+			escapedPath = strings.TrimPrefix(escapedPath, "-")
 			unitName := escapedPath + ".mount"
 
 			ctx.UI.Infof("  Mount unit: %s", unitName)
@@ -489,7 +487,10 @@ func checkDiskUsage(ctx *cli.SetupContext) {
 
 		// Parse usage as integer
 		var usage int
-		fmt.Sscanf(usagePercent, "%d", &usage)
+		if _, err := fmt.Sscanf(usagePercent, "%d", &usage); err != nil {
+			// If parsing fails, skip this filesystem
+			continue
+		}
 
 		if usage >= 90 {
 			ctx.UI.Errorf("%s: %s%% used (%s available) - CRITICAL", fs, usagePercent, available)

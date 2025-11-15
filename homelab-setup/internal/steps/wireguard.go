@@ -46,11 +46,7 @@ func NewWireGuardSetup(packages *system.PackageManager, services *system.Service
 }
 
 func (w *WireGuardSetup) configDir() string {
-	dir := w.config.GetOrDefault("WIREGUARD_CONFIG_DIR", "/etc/wireguard")
-	if dir == "" {
-		return "/etc/wireguard"
-	}
-	return dir
+	return w.config.GetOrDefault("WIREGUARD_CONFIG_DIR", "/etc/wireguard")
 }
 
 // PromptForWireGuard asks if the user wants to configure WireGuard
@@ -153,6 +149,9 @@ func (w *WireGuardSetup) PromptForConfig(publicKey string) (*WireGuardConfig, er
 	interfaceIP, err := w.ui.PromptInput("Interface IP address (CIDR notation)", "10.253.0.1/24")
 	if err != nil {
 		return nil, fmt.Errorf("failed to prompt for interface IP: %w", err)
+	}
+	if err := common.ValidateCIDR(interfaceIP); err != nil {
+		return nil, fmt.Errorf("invalid interface IP: %w", err)
 	}
 	cfg.InterfaceIP = interfaceIP
 

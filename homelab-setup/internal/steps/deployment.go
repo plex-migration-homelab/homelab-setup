@@ -202,7 +202,11 @@ func (d *Deployment) PullImages(serviceInfo *ServiceInfo) error {
 	if err := os.Chdir(serviceInfo.Directory); err != nil {
 		return fmt.Errorf("failed to change to service directory: %w", err)
 	}
-	defer os.Chdir(originalDir)
+	defer func() {
+		if err := os.Chdir(originalDir); err != nil {
+			d.ui.Warning(fmt.Sprintf("Failed to restore working directory: %v", err))
+		}
+	}()
 
 	// Execute compose pull
 	d.ui.Infof("Running: %s pull", composeCmd)
