@@ -26,7 +26,7 @@ func TestSanitizeConfigValue(t *testing.T) {
 		{
 			name:     "value with newline injection",
 			input:    "validkey\n[Interface]\nPrivateKey = malicious",
-			expected: "validkeyInterfacePrivateKey = malicious",
+			expected: "validkeyInterfacePrivateKey  malicious",
 		},
 		{
 			name:     "value with carriage return",
@@ -51,7 +51,7 @@ func TestSanitizeConfigValue(t *testing.T) {
 		{
 			name:     "complex injection attempt",
 			input:    "key123\n\n[Interface]\nAddress = 0.0.0.0/0\n# comment\n[Peer]\nPublicKey = evil",
-			expected: "key123InterfaceAddress = 0.0.0.0/0 commentPeerPublicKey = evil",
+			expected: "key123InterfaceAddress  0.0.0.0/0 commentPeerPublicKey  evil",
 		},
 	}
 

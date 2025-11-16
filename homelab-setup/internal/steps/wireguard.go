@@ -33,22 +33,22 @@ type WireGuardPeer struct {
 
 // WireGuardSetup handles WireGuard VPN setup
 type WireGuardSetup struct {
-packages *system.PackageManager
-services *system.ServiceManager
-fs       *system.FileSystem
-network  *system.Network
-config   *config.Config
-ui       *ui.UI
-markers  *config.Markers
-keygen   WireGuardKeyGenerator
+	packages *system.PackageManager
+	services *system.ServiceManager
+	fs       *system.FileSystem
+	network  *system.Network
+	config   *config.Config
+	ui       *ui.UI
+	markers  *config.Markers
+	keygen   WireGuardKeyGenerator
 }
 
 // WireGuardKeyGenerator describes key generation/derivation helpers so the
 // workflow can be unit-tested without shelling out to the wg binary.
 type WireGuardKeyGenerator interface {
-GenerateKeyPair() (privateKey, publicKey string, err error)
-GeneratePresharedKey() (string, error)
-DerivePublicKey(privateKey string) (string, error)
+	GenerateKeyPair() (privateKey, publicKey string, err error)
+	GeneratePresharedKey() (string, error)
+	DerivePublicKey(privateKey string) (string, error)
 }
 
 // CommandKeyGenerator implements WireGuardKeyGenerator by calling wg commands.
@@ -56,28 +56,28 @@ type CommandKeyGenerator struct{}
 
 // GenerateKeyPair produces a WireGuard key pair using "wg genkey".
 func (kg CommandKeyGenerator) GenerateKeyPair() (string, string, error) {
-privCmd := exec.Command("wg", "genkey")
-privOutput, err := privCmd.Output()
-if err != nil {
-return "", "", fmt.Errorf("failed to generate private key: %w", err)
-}
-privateKey := strings.TrimSpace(string(privOutput))
+	privCmd := exec.Command("wg", "genkey")
+	privOutput, err := privCmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate private key: %w", err)
+	}
+	privateKey := strings.TrimSpace(string(privOutput))
 
-pub, err := kg.DerivePublicKey(privateKey)
-if err != nil {
-return "", "", err
-}
-return privateKey, pub, nil
+	pub, err := kg.DerivePublicKey(privateKey)
+	if err != nil {
+		return "", "", err
+	}
+	return privateKey, pub, nil
 }
 
 // GeneratePresharedKey runs "wg genpsk".
 func (CommandKeyGenerator) GeneratePresharedKey() (string, error) {
-cmd := exec.Command("wg", "genpsk")
-output, err := cmd.Output()
-if err != nil {
-return "", fmt.Errorf("failed to generate preshared key: %w", err)
-}
-return strings.TrimSpace(string(output)), nil
+	cmd := exec.Command("wg", "genpsk")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate preshared key: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 // DerivePublicKey runs "wg pubkey" using the provided private key.
@@ -115,10 +115,17 @@ func sanitizePeerName(name string) string {
 // sanitizeConfigValue removes characters that could break the WireGuard config format
 // or be used to inject additional configuration directives. This is critical for values
 // like PublicKey, AllowedIPs, and Endpoint that are written directly to the config file.
+//
+// Security: Uses deny-listing to prevent config injection attacks by removing:
+// - Newlines/control chars that could split into multiple config lines
+// - Section markers [] that could inject new config sections
+// - Comment markers # that could hide malicious directives
+// - Shell metacharacters =;|&`$\ that could be exploited in PostUp/PreDown scripts
 func sanitizeConfigValue(value string) string {
 	// Remove newlines and carriage returns to prevent config injection
 	value = strings.ReplaceAll(value, "\n", "")
 	value = strings.ReplaceAll(value, "\r", "")
+	value = strings.ReplaceAll(value, "\t", " ")
 
 	// Remove brackets that could be used to inject sections
 	value = strings.ReplaceAll(value, "[", "")
@@ -126,6 +133,17 @@ func sanitizeConfigValue(value string) string {
 
 	// Remove hash/pound sign to prevent comment injection
 	value = strings.ReplaceAll(value, "#", "")
+
+	// Remove equals sign to prevent key=value injection
+	value = strings.ReplaceAll(value, "=", "")
+
+	// Remove shell metacharacters that could be exploited in PostUp/PreDown
+	value = strings.ReplaceAll(value, ";", "")  // Command separator
+	value = strings.ReplaceAll(value, "|", "")  // Pipe operator
+	value = strings.ReplaceAll(value, "&", "")  // Background/AND operator
+	value = strings.ReplaceAll(value, "`", "")  // Command substitution
+	value = strings.ReplaceAll(value, "$", "")  // Variable expansion
+	value = strings.ReplaceAll(value, "\\", "") // Escape sequences
 
 	// Trim whitespace
 	value = strings.TrimSpace(value)
@@ -149,9 +167,9 @@ func NewWireGuardSetup(packages *system.PackageManager, services *system.Service
 
 // SetKeyGenerator overrides the key generator implementation (used in tests).
 func (w *WireGuardSetup) SetKeyGenerator(gen WireGuardKeyGenerator) {
-if gen != nil {
-w.keygen = gen
-}
+	if gen != nil {
+		w.keygen = gen
+	}
 }
 
 func (w *WireGuardSetup) configDir() string {
@@ -188,7 +206,7 @@ func incrementIP(ip string) (string, error) {
 		return "", fmt.Errorf("cannot increment IP: last octet would exceed 254")
 	}
 
-	return fmt.Sprintf("%s.%s.%s.%d%s", parts[0], parts[1], parts[2], octet, cidrSuffix), nil
+	return fmt.Sprintf("%s.%s.%s.%d/%s", parts[0], parts[1], parts[2], octet, cidrSuffix), nil
 }
 
 // PromptForWireGuard asks if the user wants to configure WireGuard
@@ -235,39 +253,6 @@ func (w *WireGuardSetup) CheckWireGuardInstalled() error {
 
 	w.ui.Success("wg command is available")
 	return nil
-}
-
-// GenerateKeys generates WireGuard private and public keys
-func (w *WireGuardSetup) GenerateKeys() (privateKey, publicKey string, err error) {
-	w.ui.Info("Generating WireGuard keys...")
-
-	// Generate private key
-	privCmd := exec.Command("wg", "genkey")
-	privOutput, err := privCmd.Output()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to generate private key: %w", err)
-	}
-	privateKey = strings.TrimSpace(string(privOutput))
-
-	// Generate public key from private key
-	pubCmd := exec.Command("wg", "pubkey")
-	pubCmd.Stdin = strings.NewReader(privateKey)
-	pubOutput, err := pubCmd.Output()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to generate public key: %w", err)
-	}
-	publicKey = strings.TrimSpace(string(pubOutput))
-
-	w.ui.Success("Keys generated successfully")
-	w.ui.Print("")
-	w.ui.Info("Public key (share with peers):")
-	w.ui.Printf("  %s", publicKey)
-	w.ui.Print("")
-	w.ui.Warning("Private key (keep secret!):")
-	w.ui.Printf("  %s", privateKey)
-	w.ui.Print("")
-
-	return privateKey, publicKey, nil
 }
 
 // PromptForConfig prompts for WireGuard configuration
@@ -462,15 +447,24 @@ func (w *WireGuardSetup) PromptForPeer(nextIP string) (*WireGuardPeer, error) {
 	// Sanitize the peer name immediately to prevent config injection
 	peer.Name = sanitizePeerName(name)
 
-	// Prompt for public key
-	publicKey, err := w.ui.PromptInput("Peer public key", "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to prompt for public key: %w", err)
+	// Prompt for public key with validation loop
+	for {
+		publicKey, err := w.ui.PromptInput("Peer public key", "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to prompt for public key: %w", err)
+		}
+		if publicKey == "" {
+			w.ui.Error("Public key is required")
+			continue
+		}
+		if err := common.ValidateWireGuardKey(publicKey); err != nil {
+			w.ui.Error(fmt.Sprintf("Invalid WireGuard key: %v", err))
+			w.ui.Info("WireGuard keys are 44 characters, base64-encoded, ending with '='")
+			continue
+		}
+		peer.PublicKey = publicKey
+		break
 	}
-	if publicKey == "" {
-		return nil, fmt.Errorf("public key is required")
-	}
-	peer.PublicKey = publicKey
 
 	// Prompt for allowed IPs
 	for {
@@ -713,10 +707,20 @@ func (w *WireGuardSetup) Run() error {
 
 	// Generate keys
 	w.ui.Step("Generating Encryption Keys")
-	privateKey, publicKey, err := w.GenerateKeys()
+	w.ui.Info("Generating WireGuard keys...")
+	privateKey, publicKey, err := w.keygen.GenerateKeyPair()
 	if err != nil {
 		return fmt.Errorf("failed to generate keys: %w", err)
 	}
+
+	w.ui.Success("Keys generated successfully")
+	w.ui.Print("")
+	w.ui.Info("Public key (share with peers):")
+	w.ui.Printf("  %s", publicKey)
+	w.ui.Print("")
+	w.ui.Warning("Private key (keep secret!):")
+	w.ui.Printf("  %s", privateKey)
+	w.ui.Print("")
 
 	// Prompt for configuration
 	w.ui.Step("Interface Configuration")

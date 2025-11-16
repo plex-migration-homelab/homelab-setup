@@ -178,6 +178,39 @@ func ValidateDomain(domain string) error {
 	return nil
 }
 
+// ValidateWireGuardKey validates a WireGuard public/private key format
+// WireGuard keys are base64-encoded, exactly 44 characters, ending with '='
+func ValidateWireGuardKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("WireGuard key cannot be empty")
+	}
+
+	// WireGuard keys are always 44 characters (base64-encoded 32 bytes + padding)
+	if len(key) != 44 {
+		return fmt.Errorf("WireGuard key must be exactly 44 characters, got %d", len(key))
+	}
+
+	// Must end with '=' (base64 padding)
+	if !strings.HasSuffix(key, "=") {
+		return fmt.Errorf("WireGuard key must end with '=' (base64 padding)")
+	}
+
+	// Check for valid base64 characters [A-Za-z0-9+/=]
+	for i, c := range key {
+		isValid := (c >= 'A' && c <= 'Z') ||
+			(c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') ||
+			c == '+' || c == '/' ||
+			(c == '=' && i == len(key)-1) // '=' only valid at the end
+
+		if !isValid {
+			return fmt.Errorf("WireGuard key contains invalid character at position %d: '%c'", i, c)
+		}
+	}
+
+	return nil
+}
+
 // ValidateTimezone validates a timezone string (basic check)
 func ValidateTimezone(tz string) error {
 	if tz == "" {

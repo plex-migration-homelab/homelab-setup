@@ -412,7 +412,7 @@ func (w *WireGuardSetup) AddPeerWorkflow(opts *WireGuardPeerWorkflowOptions) err
 	}
 
 	var presharedKey string
-	usePSK := true
+	var usePSK bool
 	if opts.GeneratePresharedKey != nil {
 		usePSK = *opts.GeneratePresharedKey
 	} else if opts.NonInteractive {
