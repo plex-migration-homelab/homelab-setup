@@ -22,5 +22,3 @@ Declarative image + helper tooling for the NAB9 mini PC that fronts my homelab. 
 - [`docs/audits/2025-go-audit.md`](docs/audits/2025-go-audit.md) and [`docs/audits/2025-go-audit-changelog.md`](docs/audits/2025-go-audit-changelog.md): audit records and fix history.
 - [`docs/dev`](docs/dev): devcontainer, CI build pipeline, and final review checklist.
 - [`docs/roadmap`](docs/roadmap): rewrite plan, backlog, and phase handoffs.
-
-This repo is intentionally blunt. The docs highlight what I need when rebuilding the node, and everything else lives in the code or compose templates.
