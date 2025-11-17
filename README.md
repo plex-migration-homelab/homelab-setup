@@ -1,4 +1,4 @@
-# Homelab CoreOS Mini PC
+# Homelab CoreOS Mini PC &nbsp; [![build](https://github.com/zoro11031/homelab-coreos-minipc/actions/workflows/build.yml/badge.svg)](https://github.com/zoro11031/homelab-coreos-minipc/actions/workflows/build.yml)
 
 Declarative image + helper tooling for the NAB9 mini PC that fronts my homelab. It rebases Fedora CoreOS into a custom UBlue uCore build, tunnels traffic through WireGuard to a VPS, and mounts media from the backend file server over NFS.
 
