@@ -118,12 +118,19 @@ func (n *NFSConfigurator) PromptForNFSDetails() (host, export, mountPoint string
 	return host, export, mountPoint, nil
 }
 
-// ValidateNFSConnection validates the NFS server is accessible
+// ValidateNFSConnection validates the NFS server is accessible and exports are available
 func (n *NFSConfigurator) ValidateNFSConnection(host string) error {
 	n.ui.Infof("Testing connection to NFS server %s...", host)
 
-	// Test basic connectivity
-	reachable, err := n.network.TestConnectivity(host, 5)
+	// Get timeout from config (default 10 seconds)
+	timeoutStr := n.config.GetOrDefault(config.KeyNetworkTestTimeout, "10")
+	var timeout int
+	if _, err := fmt.Sscanf(timeoutStr, "%d", &timeout); err != nil || timeout <= 0 {
+		timeout = 10
+	}
+
+	// Test basic connectivity with configurable timeout
+	reachable, err := n.network.TestConnectivity(host, timeout)
 	if err != nil {
 		return fmt.Errorf("failed to test connectivity: %w", err)
 	}
@@ -174,6 +181,60 @@ func (n *NFSConfigurator) ValidateNFSConnection(host string) error {
 				}
 			}
 			n.ui.Print("")
+		}
+	}
+
+	return nil
+}
+
+// ValidateNFSExport verifies that the specified export path exists on the NFS server
+func (n *NFSConfigurator) ValidateNFSExport(host, export string) error {
+	n.ui.Infof("Verifying export path '%s' on server...", export)
+
+	// Get the list of exports from the server
+	exports, err := n.network.GetNFSExports(host)
+	if err != nil {
+		n.ui.Warning(fmt.Sprintf("Could not verify export path: %v", err))
+		n.ui.Info("Proceeding without verification - mount will fail if export doesn't exist")
+		return nil // Non-critical, let mount attempt reveal the issue
+	}
+
+	// Parse exports and check if our export exists
+	// showmount output format: "Export list for <host>:"
+	// "/export/path client1,client2"
+	exportFound := false
+	lines := strings.Split(exports, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Export list") {
+			continue
+		}
+
+		// Extract the export path (first field)
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			serverExport := fields[0]
+			if serverExport == export {
+				exportFound = true
+				n.ui.Successf("Export path '%s' exists on server", export)
+				break
+			}
+		}
+	}
+
+	if !exportFound {
+		n.ui.Warning(fmt.Sprintf("Export path '%s' not found in server's export list", export))
+		n.ui.Info("Available exports are listed above")
+		n.ui.Info("The mount will likely fail if this path doesn't exist")
+		n.ui.Print("")
+
+		// Ask if they want to continue
+		continueAnyway, err := n.ui.PromptYesNo("Continue with this export path anyway?", false)
+		if err != nil {
+			return fmt.Errorf("failed to prompt: %w", err)
+		}
+		if !continueAnyway {
+			return fmt.Errorf("NFS setup cancelled - export path not verified")
 		}
 	}
 
@@ -400,6 +461,12 @@ func (n *NFSConfigurator) Run() error {
 		if !continueAnyway {
 			return fmt.Errorf("NFS setup cancelled due to validation errors")
 		}
+	}
+
+	// Validate export path exists on server
+	n.ui.Step("Verifying Export Path")
+	if err := n.ValidateNFSExport(host, export); err != nil {
+		return fmt.Errorf("export path verification failed: %w", err)
 	}
 
 	// Create mount point

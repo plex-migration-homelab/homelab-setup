@@ -520,8 +520,12 @@ func (c *ContainerSetup) configureCloudEnv() error {
 		}
 	} else {
 		// Set empty values for optional Collabora fields
-		c.config.Set("COLLABORA_USERNAME", "admin")
-		c.config.Set("COLLABORA_PASSWORD", "")
+		if err := c.config.Set("COLLABORA_USERNAME", "admin"); err != nil {
+			return fmt.Errorf("failed to save COLLABORA_USERNAME: %w", err)
+		}
+		if err := c.config.Set("COLLABORA_PASSWORD", ""); err != nil {
+			return fmt.Errorf("failed to save COLLABORA_PASSWORD: %w", err)
+		}
 	}
 
 	// Escape domain for Collabora (dots need to be escaped)

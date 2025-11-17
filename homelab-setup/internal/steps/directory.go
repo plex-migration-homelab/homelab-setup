@@ -224,6 +224,43 @@ func (d *DirectorySetup) DisplayStructure(containersBase, appdataBase string) er
 	return nil
 }
 
+// VerifyAppdataPermissions verifies the homelab user can write to appdata directories
+func (d *DirectorySetup) VerifyAppdataPermissions(appdataBase, owner string) error {
+	d.ui.Print("")
+	d.ui.Info("Verifying write permissions for appdata directories...")
+
+	// Create a test file to verify write access
+	testFilePath := filepath.Join(appdataBase, ".write-test")
+	testContent := []byte("permission test")
+
+	// Try to write test file
+	if err := d.fs.WriteFile(testFilePath, testContent, 0644); err != nil {
+		return fmt.Errorf("cannot write to appdata directory %s: %w (check owner is %s)", appdataBase, err, owner)
+	}
+
+	// Verify we can read it back
+	readContent, err := os.ReadFile(testFilePath)
+	if err != nil {
+		// Clean up test file even if read fails
+		os.Remove(testFilePath)
+		return fmt.Errorf("cannot read from appdata directory %s: %w", appdataBase, err)
+	}
+
+	// Verify content matches
+	if string(readContent) != string(testContent) {
+		os.Remove(testFilePath)
+		return fmt.Errorf("appdata directory write verification failed: content mismatch")
+	}
+
+	// Clean up test file
+	if err := os.Remove(testFilePath); err != nil {
+		d.ui.Warning(fmt.Sprintf("Could not remove test file %s: %v", testFilePath, err))
+	}
+
+	d.ui.Success("Write permissions verified - user can write to appdata directories")
+	return nil
+}
+
 const directoryCompletionMarker = "directory-setup-complete"
 
 // Run executes the directory setup step
@@ -295,6 +332,12 @@ func (d *DirectorySetup) Run() error {
 	d.ui.Step("Creating Application Data Directories")
 	if err := d.CreateAppdataDirs(appdataBase, homelabUser); err != nil {
 		return fmt.Errorf("failed to create appdata directories: %w", err)
+	}
+
+	// Verify write permissions
+	d.ui.Step("Verifying Permissions")
+	if err := d.VerifyAppdataPermissions(appdataBase, homelabUser); err != nil {
+		return fmt.Errorf("permission verification failed: %w", err)
 	}
 
 	// Create NFS mount points if needed
