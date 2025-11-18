@@ -4,14 +4,19 @@ import "github.com/zoro11031/homelab-coreos-minipc/homelab-setup/internal/config
 
 // ensureCanonicalMarker checks for the canonical completion marker and migrates any legacy markers
 // to the canonical name to maintain backward compatibility.
-// This function is designed to be race-safe when called concurrently by multiple processes.
-func ensureCanonicalMarker(markers *config.Markers, canonical string, legacy ...string) (bool, error) {
+//
+// Race Safety: This function is safe to call concurrently from multiple processes:
+//   - Uses MarkCompleteIfNotExists() with os.O_EXCL for atomic marker creation
+//   - Multiple processes can safely check/migrate markers simultaneously
+//   - Only the process that successfully creates the canonical marker cleans up legacy markers
+//   - If another process creates the canonical marker first, this returns (true, nil) without error
+//   - Legacy marker cleanup is best-effort and failures are silently ignored
+//
+// This ensures that even if two setup processes run concurrently, marker migration
+// happens exactly once without conflicts or duplicate work.
+func ensureCanonicalMarker(cfg *config.Config, canonical string, legacy ...string) (bool, error) {
 	// First check if canonical marker exists (fast path for completed steps)
-	exists, err := markers.Exists(canonical)
-	if err != nil {
-		return false, err
-	}
-	if exists {
+	if cfg.IsComplete(canonical) {
 		return true, nil
 	}
 
@@ -21,17 +26,13 @@ func ensureCanonicalMarker(markers *config.Markers, canonical string, legacy ...
 			continue
 		}
 
-		legacyExists, err := markers.Exists(legacyName)
-		if err != nil {
-			return false, err
-		}
-		if !legacyExists {
+		if !cfg.IsComplete(legacyName) {
 			continue
 		}
 
 		// Atomically create canonical marker (race-safe)
 		// If another process already created it between our check and now, that's fine
-		wasCreated, err := markers.CreateIfNotExists(canonical)
+		wasCreated, err := cfg.MarkCompleteIfNotExists(canonical)
 		if err != nil {
 			return false, err
 		}
@@ -39,7 +40,7 @@ func ensureCanonicalMarker(markers *config.Markers, canonical string, legacy ...
 		// Best-effort cleanup of the legacy marker. Ignore errors since it's non-critical.
 		// Only remove if we were the ones who created the canonical marker
 		if wasCreated {
-			_ = markers.Remove(legacyName)
+			_ = cfg.ClearMarker(legacyName)
 		}
 		return true, nil
 	}

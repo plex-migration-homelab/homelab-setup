@@ -2,6 +2,8 @@ package steps
 
 import (
 	"fmt"
+	"net"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -12,60 +14,44 @@ import (
 	"github.com/zoro11031/homelab-coreos-minipc/homelab-setup/internal/ui"
 )
 
-// NFSConfigurator handles NFS mount configuration
-type NFSConfigurator struct {
-	config  *config.Config
-	ui      *ui.UI
-	markers *config.Markers
-	runner  system.CommandRunner
-}
+const nfsCompletionMarker = "nfs-setup-complete"
 
-// NewNFSConfigurator creates a new NFSConfigurator instance
-func NewNFSConfigurator(cfg *config.Config, ui *ui.UI, markers *config.Markers) *NFSConfigurator {
-	return &NFSConfigurator{
-		config:  cfg,
-		ui:      ui,
-		markers: markers,
-		runner:  system.NewCommandRunner(),
-	}
-}
-
-// CheckNFSUtils verifies that nfs-utils package is installed
-func (n *NFSConfigurator) CheckNFSUtils() error {
-	n.ui.Info("Checking for NFS client utilities...")
+// checkNFSUtils verifies that nfs-utils package is installed
+func checkNFSUtils(cfg *config.Config, ui *ui.UI) error {
+	ui.Info("Checking for NFS client utilities...")
 
 	installed, err := system.IsPackageInstalled("nfs-utils")
 	if err != nil {
-		n.ui.Warning(fmt.Sprintf("Could not verify nfs-utils package: %v", err))
-		n.ui.Info("Proceeding anyway - mount may fail if package is not installed")
+		ui.Warning(fmt.Sprintf("Could not verify nfs-utils package: %v", err))
+		ui.Info("Proceeding anyway - mount may fail if package is not installed")
 		return nil
 	}
 
 	if !installed {
-		n.ui.Error("nfs-utils package is not installed")
-		n.ui.Info("NFS client utilities are required for mounting NFS shares")
-		n.ui.Print("")
-		n.ui.Info("To install nfs-utils:")
-		n.ui.Info("  1. Install the package:")
-		n.ui.Info("     sudo rpm-ostree install nfs-utils")
-		n.ui.Info("  2. Reboot the system:")
-		n.ui.Info("     sudo systemctl reboot")
-		n.ui.Info("  3. Re-run the setup after reboot")
-		n.ui.Print("")
+		ui.Error("nfs-utils package is not installed")
+		ui.Info("NFS client utilities are required for mounting NFS shares")
+		ui.Print("")
+		ui.Info("To install nfs-utils:")
+		ui.Info("  1. Install the package:")
+		ui.Info("     sudo rpm-ostree install nfs-utils")
+		ui.Info("  2. Reboot the system:")
+		ui.Info("     sudo systemctl reboot")
+		ui.Info("  3. Re-run the setup after reboot")
+		ui.Print("")
 		return fmt.Errorf("nfs-utils package is not installed")
 	}
 
-	n.ui.Success("nfs-utils package is installed")
+	ui.Success("nfs-utils package is installed")
 	return nil
 }
 
-// PromptForNFS asks if the user wants to configure NFS
-func (n *NFSConfigurator) PromptForNFS() (bool, error) {
-	n.ui.Info("NFS (Network File System) allows you to mount remote storage")
-	n.ui.Info("This is useful for accessing media libraries from a NAS server")
-	n.ui.Print("")
+// promptForNFS asks if the user wants to configure NFS
+func promptForNFS(cfg *config.Config, ui *ui.UI) (bool, error) {
+	ui.Info("NFS (Network File System) allows you to mount remote storage")
+	ui.Info("This is useful for accessing media libraries from a NAS server")
+	ui.Print("")
 
-	useNFS, err := n.ui.PromptYesNo("Do you want to configure NFS mounts?", true)
+	useNFS, err := ui.PromptYesNo("Do you want to configure NFS mounts?", true)
 	if err != nil {
 		return false, fmt.Errorf("failed to prompt for NFS: %w", err)
 	}
@@ -73,20 +59,20 @@ func (n *NFSConfigurator) PromptForNFS() (bool, error) {
 	return useNFS, nil
 }
 
-// PromptForNFSDetails prompts for NFS server and export details
-func (n *NFSConfigurator) PromptForNFSDetails() (host, export, mountPoint string, err error) {
+// promptForNFSDetails prompts for NFS server and export details
+func promptForNFSDetails(cfg *config.Config, ui *ui.UI) (host, export, mountPoint string, err error) {
 	// Check if already configured
-	existingServer := n.config.GetOrDefault("NFS_SERVER", "")
+	existingServer := cfg.GetOrDefault("NFS_SERVER", "")
 	if existingServer != "" {
-		n.ui.Infof("Previously configured NFS server: %s", existingServer)
-		useExisting, err := n.ui.PromptYesNo("Use this NFS server?", true)
+		ui.Infof("Previously configured NFS server: %s", existingServer)
+		useExisting, err := ui.PromptYesNo("Use this NFS server?", true)
 		if err != nil {
 			return "", "", "", fmt.Errorf("failed to prompt: %w", err)
 		}
 		if useExisting {
 			host = existingServer
-			export = n.config.GetOrDefault("NFS_EXPORT", "")
-			mountPoint = n.config.GetOrDefault("NFS_MOUNT_POINT", "")
+			export = cfg.GetOrDefault("NFS_EXPORT", "")
+			mountPoint = cfg.GetOrDefault("NFS_MOUNT_POINT", "")
 			if export != "" && mountPoint != "" {
 				return host, export, mountPoint, nil
 			}
@@ -94,24 +80,39 @@ func (n *NFSConfigurator) PromptForNFSDetails() (host, export, mountPoint string
 	}
 
 	// Prompt for NFS server
-	n.ui.Print("")
-	n.ui.Info("Enter NFS server details:")
-	host, err = n.ui.PromptInput("NFS server IP or hostname", "192.168.1.100")
+	ui.Print("")
+	ui.Info("Enter NFS server details:")
+	host, err = ui.PromptInput("NFS server IP or hostname", "192.168.1.100")
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to prompt for NFS server: %w", err)
 	}
 
 	// Validate IP or hostname
-	// Try IP validation first
-	if err := common.ValidateIP(host); err != nil {
-		// Not an IP, try as hostname
-		if err := common.ValidateDomain(host); err != nil {
+	// Note: IP/hostname validation is intentionally inlined here rather than using a
+	// shared validator function. This trades code reuse for simplicity and keeps
+	// NFS-specific validation logic self-contained.
+	// Validate NFS server - must be valid IPv4 or hostname
+	isValidIP := false
+	if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
+		isValidIP = true
+	}
+	if !isValidIP {
+		// Not an IP, validate as hostname/domain
+		// Allow single-label hostnames (e.g., 'nas', 'truenas') for mDNS/NetBIOS names
+		if host == "" || len(host) > 253 {
 			return "", "", "", fmt.Errorf("invalid NFS server (not a valid IP or hostname): %s", host)
+		}
+		// Basic hostname validation - check each label
+		parts := strings.Split(host, ".")
+		for _, part := range parts {
+			if part == "" || len(part) > 63 {
+				return "", "", "", fmt.Errorf("invalid NFS server hostname: %s", host)
+			}
 		}
 	}
 
 	// Prompt for export path
-	export, err = n.ui.PromptInput("NFS export path (e.g., /mnt/storage/media)", "/mnt/storage")
+	export, err = ui.PromptInput("NFS export path (e.g., /mnt/storage/media)", "/mnt/storage")
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to prompt for NFS export: %w", err)
 	}
@@ -122,7 +123,7 @@ func (n *NFSConfigurator) PromptForNFSDetails() (host, export, mountPoint string
 	}
 
 	// Prompt for mount point
-	mountPoint, err = n.ui.PromptInput("Local mount point", "/mnt/nas-media")
+	mountPoint, err = ui.PromptInput("Local mount point", "/mnt/nas-media")
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to prompt for mount point: %w", err)
 	}
@@ -135,12 +136,12 @@ func (n *NFSConfigurator) PromptForNFSDetails() (host, export, mountPoint string
 	return host, export, mountPoint, nil
 }
 
-// ValidateNFSConnection validates the NFS server is accessible and exports are available
-func (n *NFSConfigurator) ValidateNFSConnection(host string) error {
-	n.ui.Infof("Testing connection to NFS server %s...", host)
+// validateNFSConnection validates the NFS server is accessible and exports are available
+func validateNFSConnection(cfg *config.Config, ui *ui.UI, host string) error {
+	ui.Infof("Testing connection to NFS server %s...", host)
 
 	// Get timeout from config (default 10 seconds)
-	timeoutStr := n.config.GetOrDefault(config.KeyNetworkTestTimeout, "10")
+	timeoutStr := cfg.GetOrDefault(config.KeyNetworkTestTimeout, "10")
 	var timeout int
 	if _, err := fmt.Sscanf(timeoutStr, "%d", &timeout); err != nil || timeout <= 0 {
 		timeout = 10
@@ -153,15 +154,15 @@ func (n *NFSConfigurator) ValidateNFSConnection(host string) error {
 	}
 
 	if !reachable {
-		n.ui.Error(fmt.Sprintf("NFS server %s is not reachable", host))
-		n.ui.Info("Please check:")
-		n.ui.Info("  1. Server is powered on")
-		n.ui.Info("  2. Network configuration is correct")
-		n.ui.Info("  3. Firewall allows NFS traffic")
+		ui.Error(fmt.Sprintf("NFS server %s is not reachable", host))
+		ui.Info("Please check:")
+		ui.Info("  1. Server is powered on")
+		ui.Info("  2. Network configuration is correct")
+		ui.Info("  3. Firewall allows NFS traffic")
 		return fmt.Errorf("NFS server is unreachable")
 	}
 
-	n.ui.Success("NFS server is reachable")
+	ui.Success("NFS server is reachable")
 
 	// Check if NFS exports are available
 	hasExports, err := system.CheckNFSServer(host)
@@ -170,14 +171,14 @@ func (n *NFSConfigurator) ValidateNFSConnection(host string) error {
 	}
 
 	if !hasExports {
-		n.ui.Warning("NFS server is reachable but showmount failed")
-		n.ui.Info("This might indicate:")
-		n.ui.Info("  1. NFS service is not running")
-		n.ui.Info("  2. No exports are configured")
-		n.ui.Info("  3. Firewall is blocking NFS RPC")
+		ui.Warning("NFS server is reachable but showmount failed")
+		ui.Info("This might indicate:")
+		ui.Info("  1. NFS service is not running")
+		ui.Info("  2. No exports are configured")
+		ui.Info("  3. Firewall is blocking NFS RPC")
 
 		// Ask if they want to continue anyway
-		continueAnyway, err := n.ui.PromptYesNo("Continue with NFS setup anyway?", false)
+		continueAnyway, err := ui.PromptYesNo("Continue with NFS setup anyway?", false)
 		if err != nil {
 			return fmt.Errorf("failed to prompt: %w", err)
 		}
@@ -185,34 +186,34 @@ func (n *NFSConfigurator) ValidateNFSConnection(host string) error {
 			return fmt.Errorf("NFS setup cancelled")
 		}
 	} else {
-		n.ui.Success("NFS server has accessible exports")
+		ui.Success("NFS server has accessible exports")
 
 		// Try to display exports
 		exports, err := system.GetNFSExports(host)
 		if err == nil && exports != "" {
-			n.ui.Print("")
-			n.ui.Info("Available NFS exports:")
+			ui.Print("")
+			ui.Info("Available NFS exports:")
 			for _, line := range strings.Split(exports, "\n") {
 				if strings.TrimSpace(line) != "" {
-					n.ui.Printf("  %s", line)
+					ui.Printf("  %s", line)
 				}
 			}
-			n.ui.Print("")
+			ui.Print("")
 		}
 	}
 
 	return nil
 }
 
-// ValidateNFSExport verifies that the specified export path exists on the NFS server
-func (n *NFSConfigurator) ValidateNFSExport(host, export string) error {
-	n.ui.Infof("Verifying export path '%s' on server...", export)
+// validateNFSExport verifies that the specified export path exists on the NFS server
+func validateNFSExport(cfg *config.Config, ui *ui.UI, host, export string) error {
+	ui.Infof("Verifying export path '%s' on server...", export)
 
 	// Get the list of exports from the server
 	exports, err := system.GetNFSExports(host)
 	if err != nil {
-		n.ui.Warning(fmt.Sprintf("Could not verify export path: %v", err))
-		n.ui.Info("Proceeding without verification - mount will fail if export doesn't exist")
+		ui.Warning(fmt.Sprintf("Could not verify export path: %v", err))
+		ui.Info("Proceeding without verification - mount will fail if export doesn't exist")
 		return nil // Non-critical, let mount attempt reveal the issue
 	}
 
@@ -233,20 +234,20 @@ func (n *NFSConfigurator) ValidateNFSExport(host, export string) error {
 			serverExport := fields[0]
 			if serverExport == export {
 				exportFound = true
-				n.ui.Successf("Export path '%s' exists on server", export)
+				ui.Successf("Export path '%s' exists on server", export)
 				break
 			}
 		}
 	}
 
 	if !exportFound {
-		n.ui.Warning(fmt.Sprintf("Export path '%s' not found in server's export list", export))
-		n.ui.Info("Available exports are listed above")
-		n.ui.Info("The mount will likely fail if this path doesn't exist")
-		n.ui.Print("")
+		ui.Warning(fmt.Sprintf("Export path '%s' not found in server's export list", export))
+		ui.Info("Available exports are listed above")
+		ui.Info("The mount will likely fail if this path doesn't exist")
+		ui.Print("")
 
 		// Ask if they want to continue
-		continueAnyway, err := n.ui.PromptYesNo("Continue with this export path anyway?", false)
+		continueAnyway, err := ui.PromptYesNo("Continue with this export path anyway?", false)
 		if err != nil {
 			return fmt.Errorf("failed to prompt: %w", err)
 		}
@@ -258,16 +259,16 @@ func (n *NFSConfigurator) ValidateNFSExport(host, export string) error {
 	return nil
 }
 
-// CreateMountPoint creates the local mount point directory
-func (n *NFSConfigurator) CreateMountPoint(mountPoint string) error {
-	n.ui.Infof("Creating mount point %s...", mountPoint)
+// createMountPoint creates the local mount point directory
+func createMountPoint(cfg *config.Config, ui *ui.UI, mountPoint string) error {
+	ui.Infof("Creating mount point %s...", mountPoint)
 
 	// Create directory with root ownership (mount points should be owned by root)
 	if err := system.EnsureDirectory(mountPoint, "root:root", 0755); err != nil {
 		return fmt.Errorf("failed to create mount point: %w", err)
 	}
 
-	n.ui.Success("Mount point created")
+	ui.Success("Mount point created")
 	return nil
 }
 
@@ -291,17 +292,17 @@ func mountPointToUnitBaseName(mountPoint string) string {
 }
 
 // getNFSMountOptions returns the NFS mount options from config or a default
-func (n *NFSConfigurator) getNFSMountOptions() string {
-	options := n.config.GetOrDefault(config.KeyNFSMountOptions, "")
+func getNFSMountOptions(cfg *config.Config) string {
+	options := cfg.GetOrDefault(config.KeyNFSMountOptions, "")
 	if options == "" {
 		return "defaults,_netdev"
 	}
 	return options
 }
 
-// CreateSystemdUnits creates a systemd mount and automount unit for NFS.
-func (n *NFSConfigurator) CreateSystemdUnits(host, export, mountPoint string) error {
-	n.ui.Info("Creating systemd mount and automount units...")
+// createSystemdUnits creates a systemd mount and automount unit for NFS.
+func createSystemdUnits(cfg *config.Config, ui *ui.UI, host, export, mountPoint string) error {
+	ui.Info("Creating systemd mount and automount units...")
 
 	// Convert mount point to systemd unit name.
 	// Example: /mnt/nas-media -> mnt-nas-media
@@ -313,14 +314,14 @@ func (n *NFSConfigurator) CreateSystemdUnits(host, export, mountPoint string) er
 	mountUnitPath := filepath.Join("/etc/systemd/system", mountUnitName)
 	automountUnitPath := filepath.Join("/etc/systemd/system", automountUnitName)
 
-	n.ui.Infof("Creating units: %s, %s", mountUnitName, automountUnitName)
+	ui.Infof("Creating units: %s, %s", mountUnitName, automountUnitName)
 
 	// Get NFS mount options from config or use default, add nofail for resilience.
-	mountOptions := n.getNFSMountOptions()
+	mountOptions := getNFSMountOptions(cfg)
 	if !strings.Contains(mountOptions, "nofail") {
 		mountOptions = "nofail," + mountOptions
 	}
-	n.ui.Infof("Using NFS mount options: %s", mountOptions)
+	ui.Infof("Using NFS mount options: %s", mountOptions)
 
 	// Generate mount unit content.
 	mountContent := fmt.Sprintf(`[Unit]
@@ -354,84 +355,84 @@ WantedBy=multi-user.target
 	if err := system.WriteFile(mountUnitPath, []byte(mountContent), 0644); err != nil {
 		return fmt.Errorf("failed to write mount unit %s: %w", mountUnitPath, err)
 	}
-	n.ui.Successf("Created mount unit: %s", mountUnitPath)
+	ui.Successf("Created mount unit: %s", mountUnitPath)
 
 	// Write the automount unit file.
 	if err := system.WriteFile(automountUnitPath, []byte(automountContent), 0644); err != nil {
 		return fmt.Errorf("failed to write automount unit %s: %w", automountUnitPath, err)
 	}
-	n.ui.Successf("Created automount unit: %s", automountUnitPath)
+	ui.Successf("Created automount unit: %s", automountUnitPath)
 
 	// Reload systemd to recognize the new units.
-	if output, err := n.runner.Run("sudo", "-n", "systemctl", "daemon-reload"); err != nil {
-		return fmt.Errorf("failed to reload systemd: %w\nOutput: %s", err, output)
+	cmd := exec.Command("sudo", "-n", "systemctl", "daemon-reload")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to reload systemd: %w\nOutput: %s", err, string(output))
 	}
-	n.ui.Success("systemd reloaded")
+	ui.Success("systemd reloaded")
 
 	// Enable and start the automount unit.
-	if output, err := n.runner.Run("sudo", "-n", "systemctl", "enable", "--now", automountUnitName); err != nil {
-		return fmt.Errorf("failed to enable and start automount unit: %w\nOutput: %s", err, output)
+	cmd = exec.Command("sudo", "-n", "systemctl", "enable", "--now", automountUnitName)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to enable and start automount unit: %w\nOutput: %s", err, string(output))
 	}
 
-	n.ui.Successf("Enabled and started automount unit: %s", automountUnitName)
+	ui.Successf("Enabled and started automount unit: %s", automountUnitName)
 
 	return nil
 }
 
-const nfsCompletionMarker = "nfs-setup-complete"
-
-// Run executes the NFS configuration step
-func (n *NFSConfigurator) Run() error {
+// RunNFSSetup executes the NFS configuration step
+func RunNFSSetup(cfg *config.Config, ui *ui.UI) error {
 	// Check if already completed (and migrate legacy markers)
-	completed, err := ensureCanonicalMarker(n.markers, nfsCompletionMarker, "nfs-configured", "nfs-skipped")
+	completed, err := ensureCanonicalMarker(cfg, nfsCompletionMarker, "nfs-configured", "nfs-skipped")
 	if err != nil {
 		return fmt.Errorf("failed to check marker: %w", err)
 	}
 	if completed {
-		n.ui.Info("NFS already configured (marker found)")
-		n.ui.Info("To re-run, remove marker: ~/.local/homelab-setup/" + nfsCompletionMarker)
+		ui.Info("NFS already configured (marker found)")
+		ui.Info("To re-run, remove marker: ~/.local/homelab-setup/" + nfsCompletionMarker)
 		return nil
 	}
 
-	n.ui.Header("NFS Configuration")
-	n.ui.Info("Configure Network File System (NFS) mounts...")
-	n.ui.Print("")
+	ui.Header("NFS Configuration")
+	ui.Info("Configure Network File System (NFS) mounts...")
+	ui.Print("")
 
 	// Ask if they want to configure NFS
-	n.ui.Step("NFS Setup")
-	useNFS, err := n.PromptForNFS()
+	ui.Step("NFS Setup")
+	useNFS, err := promptForNFS(cfg, ui)
 	if err != nil {
 		return fmt.Errorf("failed to prompt for NFS: %w", err)
 	}
 
 	if !useNFS {
-		n.ui.Info("Skipping NFS configuration")
-		n.ui.Info("To configure NFS later, remove marker: ~/.local/homelab-setup/" + nfsCompletionMarker)
-		if err := n.markers.Create(nfsCompletionMarker); err != nil {
+		ui.Info("Skipping NFS configuration")
+		ui.Info("To configure NFS later, remove marker: ~/.local/homelab-setup/" + nfsCompletionMarker)
+		if err := cfg.MarkComplete(nfsCompletionMarker); err != nil {
 			return fmt.Errorf("failed to create completion marker: %w", err)
 		}
 		return nil
 	}
 
 	// Check for nfs-utils package
-	n.ui.Step("Checking NFS Prerequisites")
-	if err := n.CheckNFSUtils(); err != nil {
+	ui.Step("Checking NFS Prerequisites")
+	if err := checkNFSUtils(cfg, ui); err != nil {
 		return fmt.Errorf("NFS prerequisites check failed: %w", err)
 	}
 
 	// Get NFS details
-	n.ui.Step("NFS Server Details")
-	host, export, mountPoint, err := n.PromptForNFSDetails()
+	ui.Step("NFS Server Details")
+	host, export, mountPoint, err := promptForNFSDetails(cfg, ui)
 	if err != nil {
 		return fmt.Errorf("failed to get NFS details: %w", err)
 	}
 
 	// Validate NFS connection
-	n.ui.Step("Validating NFS Connection")
-	if err := n.ValidateNFSConnection(host); err != nil {
-		n.ui.Error(fmt.Sprintf("NFS validation failed: %v", err))
+	ui.Step("Validating NFS Connection")
+	if err := validateNFSConnection(cfg, ui, host); err != nil {
+		ui.Error(fmt.Sprintf("NFS validation failed: %v", err))
 
-		continueAnyway, err := n.ui.PromptYesNo("Continue with NFS setup despite validation errors?", false)
+		continueAnyway, err := ui.PromptYesNo("Continue with NFS setup despite validation errors?", false)
 		if err != nil {
 			return fmt.Errorf("failed to prompt: %w", err)
 		}
@@ -441,50 +442,50 @@ func (n *NFSConfigurator) Run() error {
 	}
 
 	// Validate export path exists on server
-	n.ui.Step("Verifying Export Path")
-	if err := n.ValidateNFSExport(host, export); err != nil {
+	ui.Step("Verifying Export Path")
+	if err := validateNFSExport(cfg, ui, host, export); err != nil {
 		return fmt.Errorf("export path verification failed: %w", err)
 	}
 
 	// Create mount point
-	n.ui.Step("Creating Mount Point")
-	if err := n.CreateMountPoint(mountPoint); err != nil {
+	ui.Step("Creating Mount Point")
+	if err := createMountPoint(cfg, ui, mountPoint); err != nil {
 		return fmt.Errorf("failed to create mount point: %w", err)
 	}
 
 	// Create systemd mount and automount units
-	n.ui.Step("Creating Systemd Units")
-	if err := n.CreateSystemdUnits(host, export, mountPoint); err != nil {
+	ui.Step("Creating Systemd Units")
+	if err := createSystemdUnits(cfg, ui, host, export, mountPoint); err != nil {
 		return fmt.Errorf("failed to create systemd units: %w", err)
 	}
 
 	// The automount unit handles starting, so we don't need to manually start the mount unit.
 	// We also don't need to check the status here as it will be mounted on first access.
-	n.ui.Info("Systemd automount configured. The share will be mounted on first access.")
+	ui.Info("Systemd automount configured. The share will be mounted on first access.")
 
 	// Save configuration
-	n.ui.Step("Saving Configuration")
-	if err := n.config.Set("NFS_SERVER", host); err != nil {
+	ui.Step("Saving Configuration")
+	if err := cfg.Set("NFS_SERVER", host); err != nil {
 		return fmt.Errorf("failed to save NFS server: %w", err)
 	}
 
-	if err := n.config.Set("NFS_EXPORT", export); err != nil {
+	if err := cfg.Set("NFS_EXPORT", export); err != nil {
 		return fmt.Errorf("failed to save NFS export: %w", err)
 	}
 
-	if err := n.config.Set("NFS_MOUNT_POINT", mountPoint); err != nil {
+	if err := cfg.Set("NFS_MOUNT_POINT", mountPoint); err != nil {
 		return fmt.Errorf("failed to save NFS mount point: %w", err)
 	}
 
-	n.ui.Print("")
-	n.ui.Separator()
-	n.ui.Success("✓ NFS configuration completed")
-	n.ui.Infof("Server: %s", host)
-	n.ui.Infof("Export: %s", export)
-	n.ui.Infof("Mount Point: %s", mountPoint)
+	ui.Print("")
+	ui.Separator()
+	ui.Success("✓ NFS configuration completed")
+	ui.Infof("Server: %s", host)
+	ui.Infof("Export: %s", export)
+	ui.Infof("Mount Point: %s", mountPoint)
 
 	// Create completion marker
-	if err := n.markers.Create(nfsCompletionMarker); err != nil {
+	if err := cfg.MarkComplete(nfsCompletionMarker); err != nil {
 		return fmt.Errorf("failed to create completion marker: %w", err)
 	}
 
