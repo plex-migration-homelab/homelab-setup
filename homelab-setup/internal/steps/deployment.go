@@ -89,6 +89,29 @@ func getRuntimeFromConfig(cfg *config.Config) (system.ContainerRuntime, error) {
 func createComposeService(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) error {
 	ui.Infof("Creating systemd service: %s", serviceInfo.UnitName)
 
+	serviceUser, err := getServiceUser(cfg)
+	if err != nil {
+		return err
+	}
+
+	lingerEnabled, err := system.IsLingerEnabled(serviceUser)
+	if err != nil {
+		return fmt.Errorf("failed to check lingering for %s: %w", serviceUser, err)
+	}
+
+	if !lingerEnabled {
+		ui.Infof("Enabling lingering for %s so /run/user is available for rootless compose", serviceUser)
+		if err := system.EnableLinger(serviceUser); err != nil {
+			return err
+		}
+		ui.Successf("Enabled lingering for %s", serviceUser)
+	}
+
+	runtimeDir, err := system.EnsureUserRuntimeDir(serviceUser)
+	if err != nil {
+		return fmt.Errorf("failed to prepare runtime directory for %s: %w", serviceUser, err)
+	}
+
 	// Get container runtime using helper
 	runtime, err := getRuntimeFromConfig(cfg)
 	if err != nil {
@@ -110,6 +133,9 @@ After=network-online.target
 RequiresMountsFor=%s
 
 [Service]
+User=%s
+Group=%s
+Environment="XDG_RUNTIME_DIR=%s"
 Type=oneshot
 RemainAfterExit=true
 WorkingDirectory=%s
@@ -121,6 +147,7 @@ TimeoutStartSec=600
 [Install]
 WantedBy=multi-user.target
 `, serviceInfo.DisplayName, serviceInfo.Directory,
+		serviceUser, serviceUser, runtimeDir,
 		serviceInfo.Directory,
 		composeCmd, composeCmd, composeCmd)
 
