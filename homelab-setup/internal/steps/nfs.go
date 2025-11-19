@@ -645,14 +645,11 @@ func RunNFSSetup(cfg *config.Config, ui *ui.UI) error {
 	realMountPoint, _ := system.ResolveRealPath(mountPoint)
 	if realMountPoint != mountPoint {
 		ui.Infof("Resolved real mount point: %s -> %s", mountPoint, realMountPoint)
-		if err := cfg.Set(config.KeyNFSMountPointReal, realMountPoint); err != nil {
-			return fmt.Errorf("failed to save real mount point: %w", err)
-		}
-	} else {
-		// Same path, still save for consistency
-		if err := cfg.Set(config.KeyNFSMountPointReal, realMountPoint); err != nil {
-			return fmt.Errorf("failed to save real mount point: %w", err)
-		}
+	}
+
+	// Save the real mount point (always, for consistency)
+	if err := cfg.Set(config.KeyNFSMountPointReal, realMountPoint); err != nil {
+		return fmt.Errorf("failed to save real mount point: %w", err)
 	}
 
 	ui.Print("")

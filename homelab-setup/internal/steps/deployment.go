@@ -51,6 +51,13 @@ func getServiceInfo(cfg *config.Config, serviceName string) *ServiceInfo {
 	}
 }
 
+// getNFSMountPointReal returns the resolved real mount point from config.
+// Falls back to NFS_MOUNT_POINT if NFS_MOUNT_POINT_REAL is not set.
+// Returns empty string if neither is configured.
+func getNFSMountPointReal(cfg *config.Config) string {
+	return cfg.GetOrDefault(config.KeyNFSMountPointReal, cfg.GetOrDefault(config.KeyNFSMountPoint, ""))
+}
+
 // getSelectedServices returns the list of selected services from config
 func getSelectedServices(cfg *config.Config) ([]string, error) {
 	selectedStr := cfg.GetOrDefault("SELECTED_SERVICES", "")
@@ -191,7 +198,7 @@ func createComposeService(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInf
 
 	// Check if NFS is configured and add mount dependency (common for both runtimes)
 	// Use the real (symlink-resolved) mount point for systemd dependencies
-	nfsMountPointReal := cfg.GetOrDefault(config.KeyNFSMountPointReal, cfg.GetOrDefault(config.KeyNFSMountPoint, ""))
+	nfsMountPointReal := getNFSMountPointReal(cfg)
 	if nfsMountPointReal != "" {
 		// Get escaped mount unit name using the real path
 		mountUnit, err := system.GetMountUnitName(nfsMountPointReal)
@@ -763,7 +770,7 @@ func runDeploymentPreflight(cfg *config.Config, ui *ui.UI) error {
 		}
 
 		// Check NFS mount if configured (use real path)
-		nfsMountPointReal := cfg.GetOrDefault(config.KeyNFSMountPointReal, cfg.GetOrDefault(config.KeyNFSMountPoint, ""))
+		nfsMountPointReal := getNFSMountPointReal(cfg)
 		if nfsMountPointReal != "" {
 			ui.Infof("Verifying NFS mount at %s...", nfsMountPointReal)
 			cmd := exec.Command("findmnt", nfsMountPointReal)
