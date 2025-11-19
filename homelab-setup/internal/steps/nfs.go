@@ -17,7 +17,7 @@ import (
 const nfsCompletionMarker = "nfs-setup-complete"
 
 // checkNFSUtils verifies that nfs-utils package is installed
-func checkNFSUtils(cfg *config.Config, ui *ui.UI) error {
+func checkNFSUtils(_ *config.Config, ui *ui.UI) error {
 	ui.Info("Checking for NFS client utilities...")
 
 	installed, err := system.IsPackageInstalled("nfs-utils")
@@ -46,7 +46,7 @@ func checkNFSUtils(cfg *config.Config, ui *ui.UI) error {
 }
 
 // promptForNFS asks if the user wants to configure NFS
-func promptForNFS(cfg *config.Config, ui *ui.UI) (bool, error) {
+func promptForNFS(_ *config.Config, ui *ui.UI) (bool, error) {
 	ui.Info("NFS (Network File System) allows you to mount remote storage")
 	ui.Info("This is useful for accessing media libraries from a NAS server")
 	ui.Print("")
@@ -206,7 +206,7 @@ func validateNFSConnection(cfg *config.Config, ui *ui.UI, host string) error {
 }
 
 // validateNFSExport verifies that the specified export path exists on the NFS server
-func validateNFSExport(cfg *config.Config, ui *ui.UI, host, export string) error {
+func validateNFSExport(_ *config.Config, ui *ui.UI, host, export string) error {
 	ui.Infof("Verifying export path '%s' on server...", export)
 
 	// Get the list of exports from the server
@@ -260,7 +260,7 @@ func validateNFSExport(cfg *config.Config, ui *ui.UI, host, export string) error
 }
 
 // createMountPoint creates the local mount point directory
-func createMountPoint(cfg *config.Config, ui *ui.UI, mountPoint string) error {
+func createMountPoint(_ *config.Config, ui *ui.UI, mountPoint string) error {
 	ui.Infof("Creating mount point %s...", mountPoint)
 
 	// Create directory with root ownership (mount points should be owned by root)
@@ -293,94 +293,255 @@ func mountPointToUnitBaseName(mountPoint string) string {
 
 // getNFSMountOptions returns the NFS mount options from config or a default
 func getNFSMountOptions(cfg *config.Config) string {
-	options := cfg.GetOrDefault(config.KeyNFSMountOptions, "")
-	if options == "" {
-		return "defaults,_netdev"
+	// Base options enforce safe boot behavior and network readiness
+	baseOptions := []string{"defaults", "nfsvers=4.2", "_netdev", "nofail"}
+
+	// Parse user options into a map for easy lookup
+	userOptions := make(map[string]string)
+	rawOptions := cfg.GetOrDefault(config.KeyNFSMountOptions, "")
+	for _, raw := range strings.Split(rawOptions, ",") {
+		opt := strings.TrimSpace(raw)
+		if opt == "" {
+			continue
+		}
+		key := optionKey(opt)
+		userOptions[key] = opt
 	}
-	return options
+
+	// Build final list: base options with user overrides, then append new user options
+	var result []string
+	seen := make(map[string]bool)
+
+	// First pass: add base options (or user override if present)
+	for _, baseOpt := range baseOptions {
+		key := optionKey(baseOpt)
+		if userOpt, exists := userOptions[key]; exists {
+			result = append(result, userOpt)
+			seen[key] = true
+		} else {
+			result = append(result, baseOpt)
+			seen[key] = true
+		}
+	}
+
+	// Second pass: append any new user options not in base
+	for key, userOpt := range userOptions {
+		if !seen[key] {
+			result = append(result, userOpt)
+		}
+	}
+
+	return strings.Join(result, ",")
 }
 
-// createSystemdUnits creates a systemd mount and automount unit for NFS.
-func createSystemdUnits(cfg *config.Config, ui *ui.UI, host, export, mountPoint string) error {
-	ui.Info("Creating systemd mount and automount units...")
+// optionKey normalizes an option name for override checks (e.g., nfsvers=4.2 -> nfsvers)
+func optionKey(option string) string {
+	if option == "" {
+		return ""
+	}
 
-	// Convert mount point to systemd unit name.
-	// Example: /mnt/nas-media -> mnt-nas-media
+	// Split once to keep the base key (everything before '=')
+	parts := strings.SplitN(option, "=", 2)
+	return strings.TrimSpace(parts[0])
+}
+
+// createFstabEntry adds an NFS mount entry to /etc/fstab with validation
+func createFstabEntry(cfg *config.Config, ui *ui.UI, host, export, mountPoint string) error {
+	ui.Info("Adding NFS mount to /etc/fstab...")
+
+	// Build fstab entry with resilient options
+	// nfsvers=4.2 - Use NFSv4.2 for best performance (overridable via config)
+	// _netdev - Mount only after network is available
+	// nofail - Don't block boot if mount fails
+	// defaults - Use default mount options
+	mountOptions := getNFSMountOptions(cfg)
+	fstabEntry := fmt.Sprintf("%s:%s %s nfs %s 0 0", host, export, mountPoint, mountOptions)
+
+	// Read current fstab
+	fstabPath := "/etc/fstab"
+	content, err := system.ReadFile(fstabPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", fstabPath, err)
+	}
+
+	fstabLines := strings.Split(string(content), "\n")
+
+	// Check if an identical entry already exists and build new content with replacements
+	var updatedLines []string
+	replacedEntry := false
+
+	for _, line := range fstabLines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check for exact duplicate
+		if trimmed == fstabEntry {
+			ui.Success("Identical fstab entry already exists, skipping")
+			return nil
+		}
+
+		// Check if mount point is already used (even with different options)
+		// Parse fields properly: device mountpoint fstype options dump pass
+		if !strings.HasPrefix(trimmed, "#") && trimmed != "" {
+			fields := strings.Fields(trimmed)
+			// Valid fstab line has at least 2 fields (device and mount point)
+			if len(fields) >= 2 && fields[1] == mountPoint {
+				ui.Warning(fmt.Sprintf("Mount point %s already exists in fstab with different options", mountPoint))
+				ui.Infof("Existing entry: %s", trimmed)
+				ui.Infof("New entry:      %s", fstabEntry)
+
+				continueAnyway, err := ui.PromptYesNo("Replace existing entry?", false)
+				if err != nil {
+					return fmt.Errorf("failed to prompt: %w", err)
+				}
+				if !continueAnyway {
+					return fmt.Errorf("fstab entry creation cancelled")
+				}
+
+				// Comment out the old entry and mark for replacement
+				updatedLines = append(updatedLines, "# "+trimmed+" # Replaced by homelab-setup")
+				replacedEntry = true
+				continue
+			}
+		}
+
+		// Keep all other lines as-is
+		updatedLines = append(updatedLines, line)
+	}
+
+	// Build new content from updated lines
+	newContent := strings.Join(updatedLines, "\n")
+	if !strings.HasSuffix(newContent, "\n") {
+		newContent += "\n"
+	}
+
+	// Append new entry
+	newContent += "# NFS mount added by homelab-setup\n"
+	newContent += fstabEntry + "\n"
+
+	if replacedEntry {
+		ui.Info("Old entry will be commented out and new entry appended")
+	}
+
+	ui.Infof("Adding entry: %s", fstabEntry)
+
+	// Write updated fstab
+	if err := system.WriteFile(fstabPath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", fstabPath, err)
+	}
+
+	ui.Success("Added entry to /etc/fstab")
+
+	// Validate fstab syntax with mount -a --fake (dry run)
+	ui.Info("Validating fstab syntax...")
+	cmd := exec.Command("sudo", "-n", "mount", "-a", "--fake")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		ui.Error(fmt.Sprintf("fstab validation failed: %v", err))
+		ui.Error(fmt.Sprintf("Output: %s", string(output)))
+		ui.Warning("You may need to manually fix /etc/fstab")
+		return fmt.Errorf("fstab validation failed: %w", err)
+	}
+	ui.Success("fstab syntax validated")
+
+	// Attempt to mount
+	ui.Infof("Mounting %s...", mountPoint)
+	cmd = exec.Command("sudo", "-n", "mount", "-a")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		ui.Warning(fmt.Sprintf("Mount command reported issues: %v", err))
+		ui.Warning(fmt.Sprintf("Output: %s", string(output)))
+		ui.Info("This may be non-critical if other mounts failed. Checking target mount...")
+	}
+
+	// Verify the mount with findmnt
+	ui.Infof("Verifying mount at %s...", mountPoint)
+	cmd = exec.Command("findmnt", mountPoint)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		ui.Error(fmt.Sprintf("Mount verification failed: %v", err))
+		ui.Info("Troubleshooting steps:")
+		ui.Info("  1. Check network connectivity to NFS server")
+		ui.Info("  2. Verify NFS server is running and exports are accessible")
+		ui.Info("  3. Check firewall rules (NFS ports: 2049, 111)")
+		ui.Info("  4. Manually verify: sudo showmount -e " + host)
+		ui.Info("  5. Check server permissions for this client IP")
+		return fmt.Errorf("mount verification failed - mount point not accessible: %w", err)
+	}
+
+	ui.Successf("Mount verified at %s", mountPoint)
+	ui.Infof("Mount details:\n%s", string(output))
+
+	return nil
+}
+
+// migrateSystemdMountToFstab migrates from legacy systemd mount units to fstab
+func migrateSystemdMountToFstab(_ *config.Config, ui *ui.UI, mountPoint string) {
+	ui.Info("Checking for legacy systemd mount units...")
+
+	// Convert mount point to systemd unit name
 	unitBaseName := mountPointToUnitBaseName(mountPoint)
-
 	mountUnitName := unitBaseName + ".mount"
 	automountUnitName := unitBaseName + ".automount"
 
 	mountUnitPath := filepath.Join("/etc/systemd/system", mountUnitName)
 	automountUnitPath := filepath.Join("/etc/systemd/system", automountUnitName)
 
-	ui.Infof("Creating units: %s, %s", mountUnitName, automountUnitName)
+	// Check if old units exist
+	mountExists, _ := system.FileExists(mountUnitPath)
+	automountExists, _ := system.FileExists(automountUnitPath)
 
-	// Get NFS mount options from config or use default, add nofail for resilience.
-	mountOptions := getNFSMountOptions(cfg)
-	if !strings.Contains(mountOptions, "nofail") {
-		mountOptions = "nofail," + mountOptions
+	if !mountExists && !automountExists {
+		ui.Info("No legacy systemd mount units found")
+		return
 	}
-	ui.Infof("Using NFS mount options: %s", mountOptions)
 
-	// Generate mount unit content.
-	mountContent := fmt.Sprintf(`[Unit]
-Description=NFS mount for %s
-After=network-online.target
+	ui.Warning(fmt.Sprintf("Found legacy systemd mount units: %s", mountUnitName))
+	ui.Info("Migrating to fstab-based mounting...")
 
-[Mount]
-What=%s:%s
-Where=%s
-Type=nfs
-Options=%s
-TimeoutSec=30
+	// Stop and disable automount unit if it exists
+	if automountExists {
+		ui.Infof("Stopping and disabling %s...", automountUnitName)
+		cmd := exec.Command("sudo", "-n", "systemctl", "disable", "--now", automountUnitName)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			ui.Warning(fmt.Sprintf("Failed to disable automount unit: %v\nOutput: %s", err, string(output)))
+		} else {
+			ui.Success("Automount unit disabled")
+		}
 
-[Install]
-WantedBy=multi-user.target
-`, mountPoint, host, export, mountPoint, mountOptions)
-
-	// Generate automount unit content.
-	automountContent := fmt.Sprintf(`[Unit]
-Description=Automount for %s
-After=network-online.target
-Requires=network-online.target
-
-[Automount]
-Where=%s
-TimeoutIdleSec=600
-
-[Install]
-WantedBy=multi-user.target
-`, mountPoint, mountPoint)
-
-	// Write the mount unit file.
-	if err := system.WriteFile(mountUnitPath, []byte(mountContent), 0644); err != nil {
-		return fmt.Errorf("failed to write mount unit %s: %w", mountUnitPath, err)
+		// Remove automount unit file
+		if err := system.RemoveFile(automountUnitPath); err != nil {
+			ui.Warning(fmt.Sprintf("Failed to remove %s: %v", automountUnitPath, err))
+		} else {
+			ui.Successf("Removed %s", automountUnitPath)
+		}
 	}
-	ui.Successf("Created mount unit: %s", mountUnitPath)
 
-	// Write the automount unit file.
-	if err := system.WriteFile(automountUnitPath, []byte(automountContent), 0644); err != nil {
-		return fmt.Errorf("failed to write automount unit %s: %w", automountUnitPath, err)
+	// Stop and disable mount unit if it exists
+	if mountExists {
+		ui.Infof("Stopping and disabling %s...", mountUnitName)
+		cmd := exec.Command("sudo", "-n", "systemctl", "disable", "--now", mountUnitName)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			ui.Warning(fmt.Sprintf("Failed to disable mount unit: %v\nOutput: %s", err, string(output)))
+		} else {
+			ui.Success("Mount unit disabled")
+		}
+
+		// Remove mount unit file
+		if err := system.RemoveFile(mountUnitPath); err != nil {
+			ui.Warning(fmt.Sprintf("Failed to remove %s: %v", mountUnitPath, err))
+		} else {
+			ui.Successf("Removed %s", mountUnitPath)
+		}
 	}
-	ui.Successf("Created automount unit: %s", automountUnitPath)
 
-	// Reload systemd to recognize the new units.
+	// Reload systemd daemon
+	ui.Info("Reloading systemd daemon...")
 	cmd := exec.Command("sudo", "-n", "systemctl", "daemon-reload")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to reload systemd: %w\nOutput: %s", err, string(output))
-	}
-	ui.Success("systemd reloaded")
-
-	// Enable and start the automount unit.
-	cmd = exec.Command("sudo", "-n", "systemctl", "enable", "--now", automountUnitName)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to enable and start automount unit: %w\nOutput: %s", err, string(output))
+		ui.Warning(fmt.Sprintf("Failed to reload systemd: %v\nOutput: %s", err, string(output)))
+	} else {
+		ui.Success("Systemd daemon reloaded")
 	}
 
-	ui.Successf("Enabled and started automount unit: %s", automountUnitName)
-
-	return nil
+	ui.Success("Legacy systemd mount units removed")
 }
 
 // RunNFSSetup executes the NFS configuration step
@@ -455,15 +616,15 @@ func RunNFSSetup(cfg *config.Config, ui *ui.UI) error {
 		return fmt.Errorf("failed to create mount point: %w", err)
 	}
 
-	// Create systemd mount and automount units
-	ui.Step("Creating Systemd Units")
-	if err := createSystemdUnits(cfg, ui, host, export, mountPoint); err != nil {
-		return fmt.Errorf("failed to create systemd units: %w", err)
-	}
+	// Migrate legacy systemd mount units if they exist
+	ui.Step("Migrating Legacy Mount Units")
+	migrateSystemdMountToFstab(cfg, ui, mountPoint)
 
-	// The automount unit handles starting, so we don't need to manually start the mount unit.
-	// We also don't need to check the status here as it will be mounted on first access.
-	ui.Info("Systemd automount configured. The share will be mounted on first access.")
+	// Create fstab entry and mount
+	ui.Step("Configuring fstab Mount")
+	if err := createFstabEntry(cfg, ui, host, export, mountPoint); err != nil {
+		return fmt.Errorf("failed to create fstab entry: %w", err)
+	}
 
 	// Save configuration
 	ui.Step("Saving Configuration")

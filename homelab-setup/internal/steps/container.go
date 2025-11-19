@@ -29,7 +29,7 @@ func serviceDirectory(cfg *config.Config, serviceName string) string {
 }
 
 // findTemplateDirectory locates compose templates
-func findTemplateDirectory(cfg *config.Config, ui *ui.UI) (string, error) {
+func findTemplateDirectory(_ *config.Config, ui *ui.UI) (string, error) {
 	ui.Step("Locating Compose Templates")
 
 	// Check home setup directory first
@@ -89,7 +89,7 @@ func countYAMLFiles(dir string) (int, error) {
 }
 
 // discoverStacks discovers available container stacks
-func discoverStacks(cfg *config.Config, ui *ui.UI, templateDir string) (map[string]string, error) {
+func discoverStacks(_ *config.Config, ui *ui.UI, templateDir string) (map[string]string, error) {
 	ui.Step("Discovering Available Container Stacks")
 	ui.Infof("Scanning directory: %s", templateDir)
 
@@ -296,40 +296,32 @@ func copyTemplates(cfg *config.Config, ui *ui.UI, templateDir string, stacks map
 }
 
 // createBaseEnvConfig creates base environment configuration
-func createBaseEnvConfig(cfg *config.Config, ui *ui.UI) error {
-	ui.Step("Creating Base Environment Configuration")
+func createBaseEnvConfig(cfg *config.Config, ui *ui.UI) {
+	ui.Step("Validating Base Environment Configuration")
 
-	// Load or prompt for configuration values
-	puid := cfg.GetOrDefault("PUID", "1000")
-	pgid := cfg.GetOrDefault("PGID", "1000")
+	// Verify PUID/PGID are set from user setup
+	puid := cfg.GetOrDefault("PUID", "")
+	pgid := cfg.GetOrDefault("PGID", "")
+
+	if puid == "" || pgid == "" {
+		ui.Warning("PUID/PGID not found in config - using defaults (1000:1000)")
+		ui.Info("Run user setup first to set proper service account IDs")
+		puid = "1000"
+		pgid = "1000"
+	}
+
 	tz := cfg.GetOrDefault("TZ", "America/Chicago")
 	// Try APPDATA_BASE first (new standard), fall back to APPDATA_PATH (legacy)
 	appdataPath := cfg.GetOrDefault("APPDATA_BASE", "")
 	if appdataPath == "" {
-		appdataPath = cfg.GetOrDefault("APPDATA_PATH", "/var/lib/containers/appdata")
+		appdataPath = cfg.GetOrDefault("APPDATA_PATH", "")
 	}
 
-	// Save base config
-	if err := cfg.Set("ENV_PUID", puid); err != nil {
-		return fmt.Errorf("failed to save ENV_PUID: %w", err)
-	}
-	if err := cfg.Set("ENV_PGID", pgid); err != nil {
-		return fmt.Errorf("failed to save ENV_PGID: %w", err)
-	}
-	if err := cfg.Set("ENV_TZ", tz); err != nil {
-		return fmt.Errorf("failed to save ENV_TZ: %w", err)
-	}
-	if err := cfg.Set("ENV_APPDATA_PATH", appdataPath); err != nil {
-		return fmt.Errorf("failed to save ENV_APPDATA_PATH: %w", err)
-	}
-
-	ui.Success("Base configuration:")
-	ui.Infof("  PUID=%s", puid)
-	ui.Infof("  PGID=%s", pgid)
+	ui.Success("Environment configuration:")
+	ui.Infof("  PUID=%s (containers will run as this UID)", puid)
+	ui.Infof("  PGID=%s (containers will run as this GID)", pgid)
 	ui.Infof("  TZ=%s", tz)
 	ui.Infof("  APPDATA_PATH=%s", appdataPath)
-
-	return nil
 }
 
 // configureStackEnv configures environment for a specific stack
@@ -581,10 +573,16 @@ func createEnvFiles(cfg *config.Config, ui *ui.UI, selectedStacks []string) erro
 
 // generateEnvContent generates .env file content for a service
 func generateEnvContent(cfg *config.Config, serviceName string) string {
-	puid := cfg.GetOrDefault("ENV_PUID", "1000")
-	pgid := cfg.GetOrDefault("ENV_PGID", "1000")
-	tz := cfg.GetOrDefault("ENV_TZ", "America/Chicago")
-	appdataPath := cfg.GetOrDefault("ENV_APPDATA_PATH", "/var/lib/containers/appdata")
+	// Use PUID/PGID directly from user setup (not ENV_PUID/ENV_PGID)
+	// This ensures containers run with the actual service account UID/GID
+	puid := cfg.GetOrDefault("PUID", "1000")
+	pgid := cfg.GetOrDefault("PGID", "1000")
+	tz := cfg.GetOrDefault("TZ", "America/Chicago")
+	// Try APPDATA_BASE first (new standard), fall back to ENV_APPDATA_PATH (legacy)
+	appdataPath := cfg.GetOrDefault("APPDATA_BASE", "")
+	if appdataPath == "" {
+		appdataPath = cfg.GetOrDefault("ENV_APPDATA_PATH", "/var/lib/containers/appdata")
+	}
 
 	// Use cases.Title instead of deprecated strings.Title
 	caser := cases.Title(language.English)
@@ -728,9 +726,7 @@ func RunContainerSetup(cfg *config.Config, ui *ui.UI) error {
 	}
 
 	// Create base environment configuration
-	if err := createBaseEnvConfig(cfg, ui); err != nil {
-		return fmt.Errorf("failed to create base config: %w", err)
-	}
+	createBaseEnvConfig(cfg, ui)
 
 	// Configure each selected stack
 	for _, serviceName := range selectedStacks {

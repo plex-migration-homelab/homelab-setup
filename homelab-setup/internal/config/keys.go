@@ -27,6 +27,7 @@ const (
 	KeyContainerRuntime   = "CONTAINER_RUNTIME"
 	KeySelectedServices   = "SELECTED_SERVICES"
 	KeyComposeProjectName = "COMPOSE_PROJECT_NAME"
+	KeyComposeCommand     = "COMPOSE_COMMAND" // Resolved compose command (e.g., "docker compose" or "docker-compose")
 
 	// Network configuration
 	KeyNetworkTestRetries = "NETWORK_TEST_RETRIES"
@@ -39,7 +40,7 @@ const (
 // Default values for configuration keys
 var Defaults = map[string]string{
 	KeyContainersBase:     "/srv/containers",
-	KeyContainerRuntime:   "podman",
+	KeyContainerRuntime:   "docker", // Docker is the default runtime (Podman also supported)
 	KeyNFSMountPoint:      "/mnt/nas",
 	KeyNetworkTestRetries: "5",
 	KeyNetworkTestTimeout: "10",

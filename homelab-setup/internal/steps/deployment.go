@@ -3,6 +3,7 @@ package steps
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -35,11 +36,18 @@ func getServiceInfo(cfg *config.Config, serviceName string) *ServiceInfo {
 	// Use cases.Title instead of deprecated strings.Title
 	caser := cases.Title(language.English)
 
+	// Determine unit name prefix based on runtime
+	runtimeStr := cfg.GetOrDefault(config.KeyContainerRuntime, "docker")
+	unitPrefix := "docker-compose"
+	if runtimeStr == "podman" {
+		unitPrefix = "podman-compose"
+	}
+
 	return &ServiceInfo{
 		Name:        serviceName,
 		DisplayName: caser.String(serviceName),
 		Directory:   filepath.Join(getServiceBaseDir(cfg), serviceName),
-		UnitName:    fmt.Sprintf("podman-compose-%s.service", serviceName),
+		UnitName:    fmt.Sprintf("%s-%s.service", unitPrefix, serviceName),
 	}
 }
 
@@ -55,7 +63,7 @@ func getSelectedServices(cfg *config.Config) ([]string, error) {
 }
 
 // checkExistingService checks if a systemd service exists
-func checkExistingService(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) (bool, error) {
+func checkExistingService(_ *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) (bool, error) {
 	ui.Infof("Checking for service: %s", serviceInfo.UnitName)
 
 	exists, err := system.ServiceExists(serviceInfo.UnitName)
@@ -74,7 +82,7 @@ func checkExistingService(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInf
 
 // getRuntimeFromConfig is a helper to get container runtime from config
 func getRuntimeFromConfig(cfg *config.Config) (system.ContainerRuntime, error) {
-	runtimeStr := cfg.GetOrDefault("CONTAINER_RUNTIME", "podman")
+	runtimeStr := cfg.GetOrDefault("CONTAINER_RUNTIME", "docker")
 	switch runtimeStr {
 	case "podman":
 		return system.RuntimePodman, nil
@@ -85,32 +93,73 @@ func getRuntimeFromConfig(cfg *config.Config) (system.ContainerRuntime, error) {
 	}
 }
 
+// fstabMountToSystemdUnit converts a fstab mount point to a systemd unit name using systemd-escape
+func fstabMountToSystemdUnit(mountPoint string) (string, error) {
+	// Use systemd-escape to properly escape the path for systemd unit name
+	cmd := exec.Command("systemd-escape", "-p", "--suffix=mount", mountPoint)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to escape mount point %s: %w", mountPoint, err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// detectComposeCommand detects and stores the appropriate compose command for the runtime
+func detectComposeCommand(cfg *config.Config, runtime system.ContainerRuntime) (string, error) {
+	// Check if already detected and stored
+	if stored := cfg.GetOrDefault(config.KeyComposeCommand, ""); stored != "" {
+		return stored, nil
+	}
+
+	// Detect compose command based on runtime
+	var composeCmd string
+	var err error
+
+	if runtime == system.RuntimeDocker {
+		// For Docker, prefer "docker compose" (V2 plugin), fallback to "docker-compose" (V1)
+		cmd := exec.Command("docker", "compose", "version")
+		if err := cmd.Run(); err == nil {
+			composeCmd = "docker compose"
+		} else if system.CommandExists("docker-compose") {
+			composeCmd = "docker-compose"
+		} else {
+			return "", fmt.Errorf("neither 'docker compose' (V2) nor 'docker-compose' (V1) found")
+		}
+	} else {
+		// For Podman, use existing detection
+		composeCmd, err = system.GetComposeCommand(runtime)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Store detected command in config for consistency
+	if err := cfg.Set(config.KeyComposeCommand, composeCmd); err != nil {
+		// Non-fatal error, log warning but continue
+		return composeCmd, nil
+	}
+
+	return composeCmd, nil
+}
+
+// formatComposeCommandForSystemd formats a compose command for use in systemd Exec directives
+// Multi-word commands like "docker compose" are formatted with absolute path
+// Single commands like "docker-compose" are returned as-is
+func formatComposeCommandForSystemd(composeCmd string) string {
+	cmdParts := strings.Fields(composeCmd)
+	if len(cmdParts) == 2 {
+		// Multi-word command like "docker compose" - use absolute path for first part
+		return fmt.Sprintf("/usr/bin/%s %s", cmdParts[0], cmdParts[1])
+	}
+	// Single command like "docker-compose" - use as-is
+	return composeCmd
+}
+
 // createComposeService creates a systemd service for docker-compose/podman-compose
+// For Docker runtime, creates system-level units that depend on docker.service and NFS mounts
+// For Podman runtime, maintains rootless behavior with User= directive
 func createComposeService(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) error {
 	ui.Infof("Creating systemd service: %s", serviceInfo.UnitName)
-
-	serviceUser, err := getServiceUser(cfg)
-	if err != nil {
-		return err
-	}
-
-	lingerEnabled, err := system.IsLingerEnabled(serviceUser)
-	if err != nil {
-		return fmt.Errorf("failed to check lingering for %s: %w", serviceUser, err)
-	}
-
-	if !lingerEnabled {
-		ui.Infof("Enabling lingering for %s so /run/user is available for rootless compose", serviceUser)
-		if err := system.EnableLinger(serviceUser); err != nil {
-			return err
-		}
-		ui.Successf("Enabled lingering for %s", serviceUser)
-	}
-
-	runtimeDir, err := system.EnsureUserRuntimeDir(serviceUser)
-	if err != nil {
-		return fmt.Errorf("failed to prepare runtime directory for %s: %w", serviceUser, err)
-	}
 
 	// Get container runtime using helper
 	runtime, err := getRuntimeFromConfig(cfg)
@@ -118,38 +167,136 @@ func createComposeService(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInf
 		return err
 	}
 
-	composeCmd, err := system.GetComposeCommand(runtime)
+	// Detect and store compose command
+	composeCmd, err := detectComposeCommand(cfg, runtime)
 	if err != nil {
-		return fmt.Errorf("failed to get compose command: %w", err)
+		return fmt.Errorf("failed to detect compose command: %w", err)
 	}
 
 	ui.Infof("Using compose command: %s", composeCmd)
 
-	// Create service unit content
-	unitContent := fmt.Sprintf(`[Unit]
-Description=Homelab %s Stack
-Wants=network-online.target
-After=network-online.target
-RequiresMountsFor=%s
+	// Build unit dependencies
+	var unitAfter, unitRequires, unitWants []string
+	var mountDependencies string
 
-[Service]
+	// Common dependencies
+	unitWants = append(unitWants, "network-online.target")
+	unitAfter = append(unitAfter, "network-online.target")
+
+	if runtime == system.RuntimeDocker {
+		// Docker runtime: system-level service with docker.service dependency
+		unitWants = append(unitWants, "docker.service")
+		unitAfter = append(unitAfter, "docker.service")
+	}
+
+	// Check if NFS is configured and add mount dependency (common for both runtimes)
+	nfsMountPoint := cfg.GetOrDefault(config.KeyNFSMountPoint, "")
+	if nfsMountPoint != "" {
+		// Get escaped mount unit name
+		mountUnit, err := fstabMountToSystemdUnit(nfsMountPoint)
+		if err != nil {
+			ui.Warning(fmt.Sprintf("Failed to escape NFS mount point: %v", err))
+			ui.Info("NFS mount dependency will not be added to service unit")
+		} else {
+			unitAfter = append(unitAfter, mountUnit)
+			unitRequires = append(unitRequires, mountUnit)
+			mountDependencies = fmt.Sprintf("RequiresMountsFor=%s\n", nfsMountPoint)
+			ui.Infof("Service will depend on NFS mount: %s (%s)", nfsMountPoint, mountUnit)
+		}
+	}
+
+	// Build [Unit] section with optional Requires= directive
+	var requiresDirective string
+	if len(unitRequires) > 0 {
+		requiresDirective = fmt.Sprintf("Requires=%s\n", strings.Join(unitRequires, " "))
+	}
+
+	unitSection := fmt.Sprintf(`[Unit]
+Description=Homelab %s Stack
+Wants=%s
+After=%s
+%s%sRequiresMountsFor=%s
+
+`, serviceInfo.DisplayName,
+		strings.Join(unitWants, " "),
+		strings.Join(unitAfter, " "),
+		requiresDirective,
+		mountDependencies,
+		serviceInfo.Directory)
+
+	// Build [Service] section
+	var serviceSection string
+
+	// Format compose command for systemd Exec directives
+	execComposeCmd := formatComposeCommandForSystemd(composeCmd)
+
+	// Add ExecStartPre to verify NFS mount if configured
+	var preExecChecks string
+	if nfsMountPoint != "" {
+		preExecChecks = fmt.Sprintf("ExecStartPre=/usr/bin/findmnt %s\n", nfsMountPoint)
+	}
+
+	if runtime == system.RuntimeDocker {
+		// Docker: system-level service (no User= directive)
+		preExecChecks += fmt.Sprintf("ExecStartPre=%s pull --quiet\n", execComposeCmd)
+
+		serviceSection = fmt.Sprintf(`[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%s
+%sExecStart=%s up -d --remove-orphans
+ExecStop=%s down --timeout 30
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+TimeoutStopSec=120
+
+`, serviceInfo.Directory, preExecChecks, execComposeCmd, execComposeCmd)
+	} else {
+		// Podman: rootless service with User= directive (legacy)
+		serviceUser, err := getServiceUser(cfg)
+		if err != nil {
+			return err
+		}
+
+		lingerEnabled, err := system.IsLingerEnabled(serviceUser)
+		if err != nil {
+			return fmt.Errorf("failed to check lingering for %s: %w", serviceUser, err)
+		}
+
+		if !lingerEnabled {
+			ui.Infof("Enabling lingering for %s so /run/user is available for rootless compose", serviceUser)
+			if err := system.EnableLinger(serviceUser); err != nil {
+				return fmt.Errorf("failed to enable lingering for %s: %w", serviceUser, err)
+			}
+			ui.Successf("Enabled lingering for %s", serviceUser)
+		}
+
+		runtimeDir, err := system.EnsureUserRuntimeDir(serviceUser)
+		if err != nil {
+			return fmt.Errorf("failed to prepare runtime directory for %s: %w", serviceUser, err)
+		}
+
+		preExecChecks += fmt.Sprintf("ExecStartPre=%s pull\n", execComposeCmd)
+
+		serviceSection = fmt.Sprintf(`[Service]
 User=%s
 Group=%s
 Environment="XDG_RUNTIME_DIR=%s"
 Type=oneshot
 RemainAfterExit=true
 WorkingDirectory=%s
-ExecStartPre=%s pull
-ExecStart=%s up -d
+%sExecStart=%s up -d
 ExecStop=%s down
 TimeoutStartSec=600
 
-[Install]
+`, serviceUser, serviceUser, runtimeDir, serviceInfo.Directory, preExecChecks, execComposeCmd, execComposeCmd)
+	}
+
+	// Build complete unit content
+	unitContent := unitSection + serviceSection + `[Install]
 WantedBy=multi-user.target
-`, serviceInfo.DisplayName, serviceInfo.Directory,
-		serviceUser, serviceUser, runtimeDir,
-		serviceInfo.Directory,
-		composeCmd, composeCmd, composeCmd)
+`
 
 	// Write service file
 	unitPath := filepath.Join("/etc/systemd/system", serviceInfo.UnitName)
@@ -192,9 +339,10 @@ func pullImages(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) error {
 		return err
 	}
 
-	composeCmd, err := system.GetComposeCommand(runtime)
+	// Use detected compose command from config
+	composeCmd, err := detectComposeCommand(cfg, runtime)
 	if err != nil {
-		return fmt.Errorf("failed to get compose command: %w", err)
+		return fmt.Errorf("failed to detect compose command: %w", err)
 	}
 
 	// Change to service directory and pull
@@ -232,7 +380,7 @@ func pullImages(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) error {
 }
 
 // enableAndStartService enables and starts a systemd service
-func enableAndStartService(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) error {
+func enableAndStartService(_ *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) error {
 	ui.Step(fmt.Sprintf("Enabling and Starting %s Service", serviceInfo.DisplayName))
 
 	// Enable service
@@ -262,7 +410,7 @@ func verifyContainers(cfg *config.Config, ui *ui.UI, serviceInfo *ServiceInfo) e
 		return err
 	}
 
-	runtimeStr := cfg.GetOrDefault("CONTAINER_RUNTIME", "podman")
+	runtimeStr := cfg.GetOrDefault("CONTAINER_RUNTIME", "docker")
 
 	// List running containers
 	containers, err := system.ListRunningContainers(runtime)
@@ -342,9 +490,12 @@ func displayAccessInfo(cfg *config.Config, ui *ui.UI) {
 		}
 	}
 
+	// Get runtime for displaying correct commands
+	runtimeStr := cfg.GetOrDefault(config.KeyContainerRuntime, "docker")
+
 	ui.Info("Note: Services may take a few minutes to fully start")
-	ui.Info("Check container logs with: podman logs <container-name>")
-	ui.Info("Or use: podman ps to see running containers")
+	ui.Infof("Check container logs with: %s logs <container-name>", runtimeStr)
+	ui.Infof("Or use: %s ps to see running containers", runtimeStr)
 	ui.Print("")
 }
 
@@ -428,6 +579,113 @@ func deployService(cfg *config.Config, ui *ui.UI, serviceName string) error {
 	return nil
 }
 
+// runDeploymentPreflight performs preflight checks before deployment
+func runDeploymentPreflight(cfg *config.Config, ui *ui.UI) error {
+	runtime, err := getRuntimeFromConfig(cfg)
+	if err != nil {
+		return err
+	}
+
+	// For Docker runtime, perform strict preflight checks
+	if runtime == system.RuntimeDocker {
+		ui.Info("Checking Docker service availability...")
+
+		// Check if docker.service is active
+		cmd := exec.Command("systemctl", "is-active", "docker.service")
+		if err := cmd.Run(); err != nil {
+			ui.Error("docker.service is not active")
+			ui.Info("Docker must be running for deployment. Start it with:")
+			ui.Info("  sudo systemctl start docker.service")
+			ui.Info("  sudo systemctl enable docker.service")
+			return fmt.Errorf("docker.service is not active - start it before deploying services")
+		}
+		ui.Success("docker.service is active")
+
+		// Check compose availability and detect command
+		ui.Info("Detecting Docker Compose command...")
+		composeCmd, err := detectComposeCommand(cfg, runtime)
+		if err != nil {
+			ui.Error("Docker Compose is not available")
+			ui.Info("Install Docker Compose V2 (preferred):")
+			ui.Info("  Follow: https://docs.docker.com/compose/install/")
+			ui.Info("Or install V1 standalone:")
+			ui.Info("  sudo rpm-ostree install docker-compose")
+			return fmt.Errorf("docker compose not available: %w", err)
+		}
+		ui.Successf("Using compose command: %s", composeCmd)
+
+		// Validate compose files for selected services
+		ui.Info("Validating compose files...")
+		selectedServices, err := getSelectedServices(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to get selected services: %w", err)
+		}
+
+		for _, serviceName := range selectedServices {
+			serviceInfo := getServiceInfo(cfg, serviceName)
+			composeFile := filepath.Join(serviceInfo.Directory, "compose.yml")
+			dockerComposeFile := filepath.Join(serviceInfo.Directory, "docker-compose.yml")
+
+			// Check if compose file exists
+			composeExists, _ := system.FileExists(composeFile)
+			dockerComposeExists, _ := system.FileExists(dockerComposeFile)
+
+			if !composeExists && !dockerComposeExists {
+				return fmt.Errorf("no compose file found in %s", serviceInfo.Directory)
+			}
+
+			// Validate compose file syntax
+			originalDir, _ := os.Getwd()
+			if err := os.Chdir(serviceInfo.Directory); err != nil {
+				return fmt.Errorf("failed to change to service directory %s: %w", serviceInfo.Directory, err)
+			}
+
+			// Run compose config --quiet to validate
+			cmdParts := strings.Fields(composeCmd)
+			cmdParts = append(cmdParts, "config", "--quiet")
+			cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				_ = os.Chdir(originalDir) // Best effort to restore directory
+				ui.Error(fmt.Sprintf("Compose file validation failed for %s", serviceName))
+				ui.Error(fmt.Sprintf("Output: %s", string(output)))
+				return fmt.Errorf("invalid compose file in %s: %w", serviceInfo.Directory, err)
+			}
+
+			if err := os.Chdir(originalDir); err != nil {
+				return fmt.Errorf("failed to restore working directory: %w", err)
+			}
+			ui.Successf("Validated compose file for %s", serviceName)
+		}
+
+		// Check NFS mount if configured
+		nfsMountPoint := cfg.GetOrDefault(config.KeyNFSMountPoint, "")
+		if nfsMountPoint != "" {
+			ui.Infof("Verifying NFS mount at %s...", nfsMountPoint)
+			cmd := exec.Command("findmnt", nfsMountPoint)
+			if err := cmd.Run(); err != nil {
+				ui.Error(fmt.Sprintf("NFS mount not available at %s", nfsMountPoint))
+				ui.Info("Ensure the NFS mount is configured and accessible:")
+				ui.Info("  1. Check /etc/fstab entry")
+				ui.Info("  2. Run: sudo mount -a")
+				ui.Info("  3. Verify: findmnt " + nfsMountPoint)
+				return fmt.Errorf("NFS mount not available at %s - services may fail without media storage", nfsMountPoint)
+			}
+			ui.Successf("NFS mount verified at %s", nfsMountPoint)
+		}
+	} else {
+		// For Podman, use existing detection
+		ui.Info("Detecting Podman compose command...")
+		composeCmd, err := detectComposeCommand(cfg, runtime)
+		if err != nil {
+			return fmt.Errorf("failed to detect compose command: %w", err)
+		}
+		ui.Successf("Using compose command: %s", composeCmd)
+	}
+
+	ui.Success("Preflight checks passed")
+	return nil
+}
+
 // RunDeployment executes the deployment step
 func RunDeployment(cfg *config.Config, ui *ui.UI) error {
 	// Check if already completed (and migrate legacy markers)
@@ -444,6 +702,12 @@ func RunDeployment(cfg *config.Config, ui *ui.UI) error {
 	ui.Header("Service Deployment")
 	ui.Info("Deploying container services...")
 	ui.Print("")
+
+	// Preflight validation
+	ui.Step("Preflight Checks")
+	if err := runDeploymentPreflight(cfg, ui); err != nil {
+		return fmt.Errorf("preflight checks failed: %w", err)
+	}
 
 	// Get selected services
 	selectedServices, err := getSelectedServices(cfg)
