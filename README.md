@@ -1,26 +1,37 @@
-# Homelab CoreOS Mini PC &nbsp; [![build](https://github.com/zoro11031/homelab-coreos-minipc/actions/workflows/build.yml/badge.svg)](https://github.com/zoro11031/homelab-coreos-minipc/actions/workflows/build.yml)
+# Homelab Setup CLI
 
-Declarative image + helper tooling for the NAB9 mini PC that fronts my homelab. It rebases Fedora CoreOS into a custom UBlue uCore build, tunnels traffic through WireGuard to a VPS, and mounts media from the backend file server over NFS.
+Go-based interactive setup wizard for configuring homelabs on Fedora CoreOS / UBlue uCore. Built for my NAB9 mini PC homelab—tunnels traffic through WireGuard to a VPS and mounts media from the backend file server over NFS.
 
 ## Scope & assumptions
 - Single-node helper meant for my own homelab. If you grab it, expect "works on my LAN" defaults.
-- Focuses on the interactive Go helper (menu-based) with optional fallbacks to the legacy bash scripts under `files/`.
+- Menu-based interactive wizard for post-installation configuration of containerized services.
 - Inputs are trusted. The wizard validates obvious pitfalls but intentionally avoids enterprise-grade policy layers.
+- **Target OS**: Fedora CoreOS and UBlue uCore only (other distributions are untested and unsupported).
 
 
-## What's running
+## What it configures
 - **Media:** Plex and Jellyfin with Intel QuickSync for hardware transcodes.
 - **Portals:** Overseerr, Wizarr, and Nginx Proxy Manager on the VPS for public access.
 - **Cloud:** Nextcloud + Collabora + Redis + PostgreSQL and Immich for photos.
-- **Platform bits baked into the image:** Podman, systemd units for WireGuard/NFS/compose, helper scripts dropped into `~/setup/`, and VAAPI drivers so the box is ready for GPU work.
+- **Infrastructure:** WireGuard VPN tunneling, NFS mounts, Podman/Docker compose stacks, and systemd service units.
 
-## Try it in a weekend
-1. **Install the image.** Build an Ignition file from `ignition/config.bu.template` (see [`docs/reference/ignition.md`](docs/reference/ignition.md)) and install Fedora CoreOS on the target mini PC. The first boot rebases into `ghcr.io/zoro11031/homelab-coreos-minipc`.
-2. **Run the helper.** SSH in as `core`, jump into `~/setup/home-lab-setup-scripts/`, and launch `homelab-setup` (Go CLI) or `./homelab-setup.sh` (legacy bash). The wizard walks through user creation, WireGuard, NFS mounts, compose secrets, and service deployment.
-3. **Expose services.** Plex/Jellyfin stay on direct ports. Everything else routes through the VPS via WireGuard + Nginx Proxy Manager. Config files for tunnels and compose stacks are under `~/setup/` and `/srv/containers/`.
+## Quick start
+1. **Install Fedora CoreOS / UBlue uCore** on your target system.
+2. **Copy the binary** to your system: `scp homelab-setup user@host:~`
+3. **Run the wizard** as a regular user: `./homelab-setup`
+4. **Follow the interactive menu** to configure user accounts, WireGuard VPN, NFS mounts, compose secrets, and deploy services.
 
-## Documentation map
-- [`docs/getting-started.md`](docs/getting-started.md): walkthrough for the image install plus the Go helper menu.
-- [`docs/reference/ignition.md`](docs/reference/ignition.md): Butane/Ignition workflow and image layering details.
-- [`docs/reference/homelab-setup-cli.md`](docs/reference/homelab-setup-cli.md): legacy bash script reference kept for historical context; the Go helper re-uses the same concepts but is menu-driven only.
-- [`docs/testing/virt-manager-qa.md`](docs/testing/virt-manager-qa.md): quick smoke checklist for the VM validation flow.
+The setup wizard creates systemd units, generates configuration files under `/srv/containers/`, and starts your containerized services.
+
+## Documentation
+- [`docs/getting-started.md`](docs/getting-started.md): Walkthrough for using the setup wizard.
+- [`docs/reference/homelab-setup-cli.md`](docs/reference/homelab-setup-cli.md): Detailed CLI reference and setup steps explanation.
+- [`homelab-setup/README.md`](homelab-setup/README.md): Go binary development guide.
+
+## Building from source
+```bash
+cd homelab-setup/
+make deps    # Download dependencies
+make test    # Run tests
+make build   # Build binary (output: bin/homelab-setup)
+```
