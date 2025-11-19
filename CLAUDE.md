@@ -7,12 +7,10 @@
 
 ## Project Overview
 
-This repository contains a declarative homelab management system for NAB9 mini PCs running Fedora CoreOS. It consists of:
+This repository contains the `homelab-setup` Go binary—a standalone CLI tool for configuring homelabs on Fedora CoreOS / UBlue uCore systems.
 
-1. **Custom CoreOS Image** - BlueBuild-based image layering on UBlue uCore
-2. **Setup CLI Tool** - Go-based interactive wizard for post-installation configuration
-3. **Infrastructure as Code** - Butane/Ignition configs, systemd units, compose stacks
-
+**Purpose**: Interactive wizard for post-installation configuration of containerized homelab services
+**Target OS**: Fedora CoreOS and UBlue uCore (other distributions are untested and unsupported)
 **Key Services**: Plex, Jellyfin (hardware transcoding), Nextcloud, Immich, Overseerr, Nginx Proxy Manager
 **Architecture**: Intel QuickSync GPU, WireGuard VPN tunnel to VPS, NFS-backed media storage
 
@@ -21,7 +19,7 @@ This repository contains a declarative homelab management system for NAB9 mini P
 ## Repository Structure
 
 ```
-homelab-coreos-minipc/
+homelab-setup/
 ├── homelab-setup/              # Go CLI tool (10,275+ lines)
 │   ├── cmd/homelab-setup/      # CLI commands & entry point
 │   ├── internal/               # Unexported packages
@@ -35,36 +33,16 @@ homelab-coreos-minipc/
 │   ├── go.mod, go.sum          # Dependencies (cobra, color, term)
 │   └── Makefile                # Build automation
 │
-├── recipes/                    # BlueBuild image recipes
-│   ├── recipe.yml              # Main recipe (base: ucore, modules)
-│   ├── packages.yml            # Package installation manifest
-│   └── systemd.yml             # Systemd unit definitions
-│
-├── files/                      # Files bundled into image
-│   ├── scripts/                # Build-time scripts (RPM Fusion)
-│   ├── system/                 # Filesystem overlay (/etc, /usr)
-│   │   ├── etc/systemd/system/ # Compose & WireGuard services
-│   │   ├── etc/profile.d/      # Intel VAAPI environment
-│   │   └── usr/local/bin/      # Compiled Go binary
-│   └── setup_scripts/          # Legacy bash setup scripts
-│
-├── ignition/                   # CoreOS first-boot provisioning
-│   ├── config.bu.template      # Butane config template
-│   └── transpile.sh            # Butane→Ignition transpiler
-│
 ├── docs/                       # Documentation
 │   ├── getting-started.md      # Quick setup guide
-│   ├── reference/              # CLI manual, Ignition docs
-│   ├── testing/                # QA checklists
-│   └── dev/                    # Devcontainer, CI pipeline docs
+│   ├── reference/              # CLI manual
+│   └── testing/                # QA checklists
 │
 ├── .github/workflows/          # CI/CD
-│   ├── build.yml               # BlueBuild image builds (daily @ 06:00 UTC)
 │   └── build-homelab-setup.yml # Go binary builds (auto-commit)
 │
 ├── .devcontainer/              # Development container
-├── .vscode/                    # VS Code configuration
-└── modules/                    # Custom BlueBuild modules
+└── .vscode/                    # VS Code configuration
 ```
 
 ---
@@ -80,9 +58,7 @@ homelab-coreos-minipc/
 
 ### Infrastructure
 
-- **Base OS**: Fedora CoreOS (UBlue uCore variant)
-- **Image Build**: BlueBuild v1.8 (YAML-based recipes)
-- **Provisioning**: Butane/Ignition (FCOS 1.4.0)
+- **Target OS**: Fedora CoreOS / UBlue uCore (other distributions unsupported)
 - **Container Runtime**: Podman (primary) or Docker
 - **VPN**: WireGuard
 - **Storage**: NFS client
@@ -90,9 +66,7 @@ homelab-coreos-minipc/
 
 ### CI/CD
 
-- **GitHub Actions**: Image builds, binary compilation
-- **Cosign**: Image signing (optional, via secrets)
-- **GHCR**: GitHub Container Registry (`ghcr.io/zoro11031/homelab-coreos-minipc`)
+- **GitHub Actions**: Go binary builds (auto-commit to repo)
 
 ---
 
@@ -152,24 +126,24 @@ make test-coverage
 # Open: coverage.html
 ```
 
-#### Building the Custom Image
+#### Testing the Binary
 
-**Local Testing** (requires BlueBuild CLI):
 ```bash
-# Install BlueBuild CLI first
-# See: https://blue-build.org/learn/getting-started/
+cd homelab-setup/
 
-# Build recipe
-bluebuild build recipes/recipe.yml
+# Run tests
+make test
 
-# Test in VM (virt-manager recommended)
-# See: docs/testing/virt-manager-qa.md
+# Build binary
+make build
+
+# Run the built binary
+./bin/homelab-setup --help
 ```
 
 **CI/CD** (automatic):
-- Push to main → triggers build
-- Daily @ 06:00 UTC → rebuilds image
-- PR → test build (no push)
+- Push to `homelab-setup/**` → triggers build and test
+- Auto-commits updated binary to repo if changed
 
 ### Code Review Checklist
 
@@ -396,49 +370,13 @@ BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 5. Auto-commits if changed (git-actions bot)
 6. Uploads artifact (30-day retention)
 
-### Image Build
-
-**BlueBuild Recipe** (`recipes/recipe.yml`):
-```yaml
-base-image: ghcr.io/ublue-os/ucore
-image-version: stable
-
-modules:
-  - type: script
-    scripts: [install-rpmfusion-release.sh]
-  - from-file: packages.yml       # Package installation
-  - type: files                   # Filesystem overlay
-    files:
-      - source: system
-        destination: /
-  - from-file: systemd.yml        # Service units
-  - type: signing                 # Cosign signing
-```
-
-**Build Schedule**:
-- **Daily**: 06:00 UTC (20 min after UBlue upstream builds)
-- **On Push**: Automatic (ignores `*.md` changes)
-- **On PR**: Test build (no push)
-- **Manual**: `workflow_dispatch`
-
-**Build Output**:
-- Registry: `ghcr.io/zoro11031/homelab-coreos-minipc:latest`
-- Tags: `latest`, git commit SHA
-- Signing: Cosign (if `SIGNING_SECRET` set)
-
-### First-Boot Deployment
+### Binary Deployment
 
 **Process**:
-1. **Install FCOS** with Ignition from `ignition/config.bu.template`
-2. **First Boot**: Auto-rebase to custom image via systemd units
-3. **Post-Rebase**: SSH as `core`, run `~/setup/homelab-setup`
-4. **Interactive Setup**: Wizard configures user, WireGuard, NFS, containers
-
-**Ignition Template** (`ignition/config.bu.template`):
-- Creates `core` user with SSH keys
-- Sets password hash
-- Enables auto-rebase service
-- Creates directories (`~/setup/`)
+1. **Install Fedora CoreOS / UBlue uCore** on target system
+2. **Copy binary**: Transfer `homelab-setup` to target system
+3. **Run setup**: Execute `./homelab-setup` as a regular user
+4. **Interactive wizard**: Configures user, WireGuard, NFS, containers, services
 
 ---
 
@@ -500,8 +438,7 @@ HOMELAB_USER=containeruser ./homelab-setup
 | `homelab-setup/internal/common/validation.go` | Input validators | ~200 |
 | `homelab-setup/internal/config/config.go` | Configuration management | ~300 |
 | `homelab-setup/internal/steps/preflight.go` | Preflight checks | ~150 |
-| `recipes/recipe.yml` | Image build recipe | ~25 |
-| `.github/workflows/build.yml` | Image CI/CD | ~45 |
+| `.github/workflows/build-homelab-setup.yml` | Binary CI/CD | ~50 |
 | `docs/getting-started.md` | User quickstart | ~200 |
 
 ### Critical Security Files
@@ -745,14 +682,17 @@ git commit -m "feat: Add feature description"
 git push -u origin claude/feature-name-<session-id>
 ```
 
-### Testing Image Locally
+### Testing Binary Locally
 
 ```bash
-# Build image (requires BlueBuild CLI)
-bluebuild build recipes/recipe.yml
+cd homelab-setup/
 
-# Test in virt-manager
-# See: docs/testing/virt-manager-qa.md
+# Run tests
+make test
+
+# Build and run
+make build
+./bin/homelab-setup --help
 ```
 
 ### Debugging
@@ -788,10 +728,9 @@ cat ~/.homelab-setup.conf
 
 ### External Resources
 
-- **BlueBuild Docs**: https://blue-build.org/
 - **Fedora CoreOS**: https://docs.fedoraproject.org/en-US/fedora-coreos/
-- **Butane Configs**: https://coreos.github.io/butane/
 - **UBlue**: https://universal-blue.org/
+- **Go Documentation**: https://golang.org/doc/
 
 ### Project Structure
 

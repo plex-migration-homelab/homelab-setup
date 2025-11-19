@@ -70,8 +70,8 @@ There are several ways to use the Ignition file:
 #### Option A: Embed in ISO (Recommended for USB installation)
 
 ```bash
-# Download the CoreOS ISO or use your custom BlueBuild ISO
-# Then embed the Ignition config
+# Download the CoreOS ISO or use your custom CoreOS ISO
+# Then embed the Ignition config into your ISO
 coreos-installer iso ignition embed -i config.ign homelab-coreos-minipc.iso
 ```
 
@@ -124,7 +124,7 @@ After these two automatic reboots, your system will be running the fully signed 
 
 ### Disabling the Automatic Rebase Units
 
-If you generate an ISO directly from the published image (e.g. `sudo bluebuild generate-iso --iso-name homelab-coreos-minipc.iso image ghcr.io/zoro11031/homelab-coreos-minipc`) and embed this Ignition file before flashing, the machine already boots into the intended image on first launch. In that case the autorebase services are redundant and will only introduce two extra reboots. Remove them before running `transpile.sh`:
+If you generate an ISO directly from the published image (for example, by creating an ISO named `homelab-coreos-minipc.iso` from the published image `ghcr.io/zoro11031/homelab-coreos-minipc`) and embed this Ignition file before flashing, the machine already boots into the intended image on first launch. In that case the autorebase services are redundant and will only introduce two extra reboots. Remove them before running `transpile.sh`:
 
 1. Delete the `storage.directories` entry that creates `/etc/ucore-autorebase`.
 2. Remove both `ucore-unsigned-autorebase.service` and `ucore-signed-autorebase.service` from the `systemd.units` list.

@@ -1,7 +1,7 @@
 # AGENTS.md - AI Contributor Guide
 
 ## Purpose
-This repository uses declarative configs and Go tooling to build and configure Fedora CoreOS-based homelab images for NAB9 mini PCs. Use this guide as the authoritative reference for AI-driven changes.
+This repository contains the `homelab-setup` Go binary—a standalone CLI tool for configuring homelabs on Fedora CoreOS / UBlue uCore. Use this guide as the authoritative reference for AI-driven changes.
 
 ## Scope
 Applies to all files in this repository unless superseded by a more specific AGENTS.md.
@@ -20,15 +20,11 @@ Applies to all files in this repository unless superseded by a more specific AGE
   - `make test`
   - `make lint`
   - `make fmt vet tidy clean`
-- Images: BlueBuild recipes under `recipes/`; provisioning via Butane/Ignition in `ignition/`.
 
 ## Repository Structure
 - `homelab-setup/`: Go CLI for setup (cmd entrypoint, internal packages, pkg/version).
-- `recipes/`: BlueBuild image recipe and manifests.
-- `files/`: System overlays, scripts, and bundled assets.
-- `ignition/`: Butane templates and transpile scripts.
 - `docs/`: Guides, references, and testing checklists.
-- `modules/`: Custom BlueBuild modules.
+- `.github/workflows/`: CI/CD for building the Go binary.
 
 ## Git Workflow
 - Feature branches should use `claude/<description>-<session-id>` when creating new branches.

@@ -35,7 +35,7 @@ These scripts automate the complete setup of a homelab environment on **UBlue uC
 ### What Makes This Special?
 
 - **Immutable OS Support**: Designed specifically for UBlue uCore's read-only filesystem
-- **BlueBuild Integration**: Works with pre-configured systemd services baked into custom images
+- **Custom image integration**: Works with pre-configured systemd services baked into custom Fedora CoreOS / UBlue uCore images (other distributions are untested and unsupported)
 - **Template-Based**: Uses compose templates from first-boot home directory setup
 - **Interactive Configuration**: Guided setup with sensible defaults
 - **Idempotent**: Safe to re-run without breaking existing configuration
@@ -45,7 +45,7 @@ These scripts automate the complete setup of a homelab environment on **UBlue uC
 
 ✅ **Pre-flight System Verification**
 - Checks rpm-ostree environment
-- Detects pre-existing services from BlueBuild image
+- Detects pre-existing services from a custom image
 - Validates required packages and templates
 
 ✅ **User Account Management**
@@ -102,7 +102,7 @@ WireGuard no longer requires rerunning the entire setup. Use the interactive men
 - systemd
 
 ### Required Packages
-These should be layered into your BlueBuild image or installed via rpm-ostree:
+These should be layered into your custom Fedora CoreOS / UBlue uCore image or installed via rpm-ostree:
 
 ```bash
 - podman
@@ -124,7 +124,7 @@ These should be layered into your BlueBuild image or installed via rpm-ostree:
 2. User account with sudo access
 3. Internet connectivity
 4. (Optional) NFS server configured with exports
-5. (Optional) BlueBuild custom image with pre-configured services
+5. (Optional) Custom Fedora CoreOS / UBlue uCore image with pre-configured services
 
 ## Quick Start
 
@@ -137,7 +137,7 @@ After first boot, the system automatically copies these scripts to your home dir
 cd ~/setup/home-lab-setup-scripts
 ```
 
-**Note:** The scripts are baked into the BlueBuild custom image and automatically deployed to `~/setup/home-lab-setup-scripts/` by the `home-directory-setup.service` systemd unit during first boot.
+**Note:** The scripts may be baked into a custom image and automatically deployed to `~/setup/home-lab-setup-scripts/` by a `home-directory-setup.service` systemd unit during first boot.
 
 ### 2. Run Setup
 
@@ -711,8 +711,8 @@ sudo systemctl restart podman-compose-*.service
 **Q: Can I run this on regular Fedora or other distributions?**
 A: These scripts are designed for UBlue uCore's immutable filesystem. They may work on regular Fedora with modifications, but are not tested for that use case.
 
-**Q: Do I need to use the BlueBuild custom image?**
-A: No, but it's recommended. The scripts will create necessary services if they don't exist in your image.
+**Q: Do I need to use a custom Fedora CoreOS / UBlue uCore image?**
+A: No, but it's recommended for a streamlined first-boot experience. The scripts will create necessary services if they don't exist in your image. Note that this project targets Fedora CoreOS and UBlue uCore variants; other distributions are untested and unsupported.
 
 **Q: Can I skip WireGuard setup?**
 A: Yes, use the "Quick Setup" option or run individual steps, skipping step 3.
@@ -750,7 +750,7 @@ MIT License - see LICENSE file for details
 ## Acknowledgments
 
 - UBlue Project for the immutable Fedora base
-- BlueBuild for custom image building
+-- Custom image tooling used to build deployment images
 - All the open-source projects that make this homelab possible
 
 ## Support
