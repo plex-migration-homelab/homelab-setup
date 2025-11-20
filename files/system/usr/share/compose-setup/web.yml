@@ -1,0 +1,105 @@
+version: '3.9'
+
+# Web Services - Overseerr, Wizarr, and Nginx Proxy Manager
+# These services are accessed via VPS reverse proxy (WireGuard tunnel)
+
+services:
+  nginxproxymanager:
+    image: lscr.io/linuxserver/nginx-proxy-manager:latest
+    container_name: nginxproxymanager
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-America/New_York}
+    ports:
+      - "80:80"     # HTTP
+      - "443:443"   # HTTPS
+      - "81:81"     # Admin Web Interface
+    volumes:
+      # Nginx Proxy Manager configuration (private label for exclusive container access)
+      - ${APPDATA_PATH}/nginxproxymanager:/config:Z
+    networks:
+      - web
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  overseerr:
+    image: lscr.io/linuxserver/overseerr:latest
+    container_name: overseerr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-America/New_York}
+    ports:
+      - "5055:5055"
+    volumes:
+      # Overseerr configuration (private label for exclusive container access)
+      - ${APPDATA_PATH}/overseerr:/config:Z
+    networks:
+      - web
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  wizarr:
+    image: ghcr.io/wizarrrr/wizarr:latest
+    container_name: wizarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-America/New_York}
+    ports:
+      - "5690:5690"
+    volumes:
+      # Wizarr database (private label for exclusive container access)
+      - ${APPDATA_PATH}/wizarr:/data/database:Z
+    networks:
+      - web
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Optional: Organizr for unified dashboard
+  organizr:
+    image: organizr/organizr:latest
+    container_name: organizr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-America/New_York}
+    ports:
+      - "9983:80"
+    volumes:
+      # Organizr configuration (private label for exclusive container access)
+      - ${APPDATA_PATH}/organizr:/config:Z
+    networks:
+      - web
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Optional: Homepage dashboard
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    ports:
+      - "3000:3000"
+    volumes:
+      # Homepage configuration (private label for exclusive container access)
+      - ${APPDATA_PATH}/homepage:/app/config:Z
+      # Docker socket read-only (no SELinux label needed for device files)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - web
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+networks:
+  web:
+    name: web
+    driver: bridge

@@ -613,6 +613,54 @@ func (s *PreflightStep) Run() error {
    - ❌ `sudo mkdir /srv/containers`
    - ✅ `sudo -n mkdir /srv/containers` (fail if password required)
 
+### SELinux Volume Labels
+
+**CRITICAL**: Fedora CoreOS has SELinux enabled by default. All Docker/Podman volume mounts **MUST** include proper SELinux context labels or containers will fail with permission denied errors.
+
+1. **Always use SELinux labels on volume mounts**
+   - ❌ `- /path/on/host:/path/in/container`
+   - ✅ `- /path/on/host:/path/in/container:Z` (private, exclusive access)
+   - ✅ `- /path/on/host:/path/in/container:z` (shared, multi-container access)
+
+2. **Choose the correct label type**
+   - **`:Z` (uppercase)** - Private label for exclusive container access
+     - Use for: Application data directories unique to one container
+     - Example: `${APPDATA_PATH}/plex:/config:Z`
+   - **`:z` (lowercase)** - Shared label for multi-container access
+     - Use for: NFS mounts, directories accessed by multiple containers
+     - Example: `/mnt/nas-media:/media:ro,z`
+   - **No label** - Only for special cases
+     - Device files: `/dev/dri:/dev/dri`
+     - Read-only system files: `/etc/localtime:/etc/localtime:ro`
+
+3. **SELinux label examples from compose templates**
+   ```yaml
+   volumes:
+     # Private container data (exclusive access)
+     - ${APPDATA_PATH}/plex:/config:Z
+     - ${APPDATA_PATH}/jellyfin/config:/config:Z
+
+     # Shared NFS mounts (multi-container access)
+     - /mnt/nas-media:/media:ro,z
+     - /mnt/nas-nextcloud/data:/var/www/html/data:z
+
+     # Special cases (no label needed)
+     - /dev/dri:/dev/dri
+     - /etc/localtime:/etc/localtime:ro
+     - /var/run/docker.sock:/var/run/docker.sock:ro
+   ```
+
+4. **Consequences of missing SELinux labels**
+   - Containers will fail to start with "Permission denied" errors
+   - Volume mounts will be inaccessible even with correct UID/GID
+   - SELinux will log AVC denials in `/var/log/audit/audit.log`
+   - Services may appear to start but fail to read/write data
+
+5. **Reference compose templates**
+   - `files/system/usr/share/compose-setup/media.yml`
+   - `files/system/usr/share/compose-setup/web.yml`
+   - `files/system/usr/share/compose-setup/cloud.yml`
+
 ### File Operations
 
 1. **Prefer editing existing files over creating new ones**

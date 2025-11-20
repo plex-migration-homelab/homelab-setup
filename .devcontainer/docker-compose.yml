@@ -6,7 +6,8 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
     volumes:
-      - ..:/workspace:cached
+      # Workspace mount (shared label for development)
+      - ..:/workspace:cached,z
       # Cache Go modules to avoid re-downloading across container lifecycles
       - go-modules:/home/vscode/.go/pkg/mod
       # Cache Go build artifacts to speed up subsequent builds
