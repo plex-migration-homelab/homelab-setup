@@ -306,16 +306,6 @@ http://<your-ip>:2283       # Immich
 
 ### Utility Scripts
 
-**`troubleshoot.sh`**
-- System information display
-- Service status checks
-- Container diagnostics
-- Network connectivity tests
-- NFS mount verification
-- Disk usage analysis
-- Log collection
-- Common issues and solutions
-
 **`common-functions.sh`**
 - Shared functions library
 - Color-coded output
@@ -465,21 +455,11 @@ Scripts are idempotent and will detect existing configuration:
 
 ### Running Diagnostics
 
+Run the Go-based troubleshooting suite via the main menu:
+
 ```bash
-# Interactive troubleshooting menu
-./scripts/troubleshoot.sh
-
-# Run all diagnostics
-./scripts/troubleshoot.sh --all
-
-# Check services only
-./scripts/troubleshoot.sh --services
-
-# Check network only
-./scripts/troubleshoot.sh --network
-
-# Collect diagnostic logs
-./scripts/troubleshoot.sh --logs
+homelab-setup
+# Select: [3] Network Troubleshooting Suite
 ```
 
 ### Common Issues
@@ -757,7 +737,7 @@ MIT License - see LICENSE file for details
 
 For issues and questions:
 - Check troubleshooting section
-- Run diagnostics: `./scripts/troubleshoot.sh`
+- Run diagnostics via `homelab-setup` menu
 - Review logs: `sudo journalctl -u <service>`
 - Check container status: `podman ps -a`
 

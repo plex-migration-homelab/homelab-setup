@@ -43,15 +43,12 @@ func checkRequiredPackages(ui *ui.UI) error {
 	ui.Info("Checking packages...")
 
 	// Core packages that are always needed
-	corePackages := []string{}
-
-	// Optional packages (for optional setup steps)
-	optionalPackages := []string{
-		"nfs-utils",       // Optional: for NFS setup
-		"wireguard-tools", // Optional: for WireGuard VPN setup
+	corePackages := []string{
+		"nfs-utils",       // Required: for NFS setup
+		"wireguard-tools", // Required: for WireGuard VPN setup
 	}
 
-	// Check core packages (none currently required)
+	// Check core packages
 	if len(corePackages) > 0 {
 		results, err := system.CheckMultiplePackages(corePackages)
 		if err != nil {
@@ -80,76 +77,7 @@ func checkRequiredPackages(ui *ui.UI) error {
 		}
 	}
 
-	// Check optional packages (warnings only)
-	if len(optionalPackages) > 0 {
-		ui.Info("Checking optional packages...")
-		results, err := system.CheckMultiplePackages(optionalPackages)
-		if err != nil {
-			ui.Warning(fmt.Sprintf("Failed to check optional packages: %v", err))
-		} else {
-			missingOptional := []string{}
-			for _, pkg := range optionalPackages {
-				if results[pkg] {
-					ui.Successf("  ✓ %s is installed", pkg)
-				} else {
-					ui.Infof("  - %s is not installed (optional)", pkg)
-					missingOptional = append(missingOptional, pkg)
-				}
-			}
-
-			if len(missingOptional) > 0 {
-				ui.Info("Optional packages can be installed later if needed:")
-				for _, pkg := range missingOptional {
-					ui.Infof("  sudo rpm-ostree install %s", pkg)
-				}
-			}
-		}
-	}
-
 	ui.Success("Package check completed")
-	return nil
-}
-
-// checkContainerRuntime verifies Docker is available and configured
-func checkContainerRuntime(cfg *config.Config, ui *ui.UI) error {
-	ui.Info("Checking container runtime...")
-
-	// Check if Docker service is active
-	if err := system.CheckDockerService(); err != nil {
-		ui.Error("  ✗ docker.service is not active")
-		ui.Info("Docker must be running. Start it with:")
-		ui.Info("  sudo systemctl start docker.service")
-		ui.Info("  sudo systemctl enable docker.service")
-		return fmt.Errorf("docker.service is not active")
-	}
-	ui.Success("  ✓ Docker service is available")
-
-	// Check for Docker Compose (prefer V2 plugin, fallback to V1)
-	if err := system.CheckDockerComposeV2(); err == nil {
-		ui.Success("  ✓ Docker Compose V2 (docker compose) is available")
-		if err := cfg.Set(config.KeyComposeCommand, "docker compose"); err != nil {
-			ui.Warning("Failed to save compose command to config")
-		}
-	} else if err := system.CheckDockerComposeV1(); err == nil {
-		ui.Success("  ✓ Docker Compose V1 (docker-compose) is available")
-		if err := cfg.Set(config.KeyComposeCommand, "docker-compose"); err != nil {
-			ui.Warning("Failed to save compose command to config")
-		}
-	} else {
-		ui.Error("  ✗ Docker Compose is not available")
-		ui.Info("Install Docker Compose V2 (preferred):")
-		ui.Info("  Follow: https://docs.docker.com/compose/install/")
-		ui.Info("Or install V1 standalone:")
-		ui.Info("  sudo rpm-ostree install docker-compose")
-		ui.Info("  sudo systemctl reboot")
-		return fmt.Errorf("docker compose not available")
-	}
-
-	// Set runtime in config
-	if err := cfg.Set(config.KeyContainerRuntime, "docker"); err != nil {
-		ui.Warning("Failed to save container runtime to config")
-	}
-
 	return nil
 }
 
@@ -306,13 +234,6 @@ func RunPreflightChecks(cfg *config.Config, ui *ui.UI) error {
 	// Run package checks
 	ui.Step("Checking Required Packages")
 	if err := checkRequiredPackages(ui); err != nil {
-		hasErrors = true
-		errorMessages = append(errorMessages, err.Error())
-	}
-
-	// Run container runtime check
-	ui.Step("Checking Container Runtime")
-	if err := checkContainerRuntime(cfg, ui); err != nil {
 		hasErrors = true
 		errorMessages = append(errorMessages, err.Error())
 	}
