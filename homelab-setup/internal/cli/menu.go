@@ -7,10 +7,14 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/zoro11031/homelab-coreos-minipc/homelab-setup/internal/troubleshoot"
 )
 
 // ErrExit is returned when the user chooses to exit the menu
 var ErrExit = errors.New("exit")
+
+// ErrBack is returned when the user chooses to go back
+var ErrBack = errors.New("back")
 
 // Menu provides an interactive menu interface
 type Menu struct {
@@ -23,9 +27,7 @@ func NewMenu(ctx *SetupContext) *Menu {
 }
 
 // clearScreen clears the terminal screen using ANSI escape codes
-// This is more portable than calling the 'clear' command
 func clearScreen() {
-	// ANSI escape codes: \033[2J clears screen, \033[H moves cursor to home
 	fmt.Print("\033[2J\033[H")
 }
 
@@ -46,6 +48,9 @@ func (m *Menu) Show() error {
 			if errors.Is(err, ErrExit) {
 				return nil
 			}
+			if errors.Is(err, ErrBack) {
+				continue
+			}
 			m.ctx.UI.Error(fmt.Sprintf("%v", err))
 			m.ctx.UI.Print("")
 			m.ctx.UI.Info("Press Enter to continue...")
@@ -58,98 +63,38 @@ func (m *Menu) Show() error {
 func (m *Menu) displayMenu() {
 	bold := color.New(color.Bold)
 	cyan := color.New(color.FgCyan, color.Bold)
-	green := color.New(color.FgGreen)
 
 	// Header
 	border := strings.Repeat("=", 70)
 	cyan.Println(border)
-	cyan.Println("  UBlue uCore Homelab Setup")
+	cyan.Println("  UBlue uCore Homelab Setup & Management")
 	cyan.Println(border)
 	fmt.Println()
 
-	m.ctx.UI.Info("Welcome to the homelab setup wizard!")
-	fmt.Println()
-	m.ctx.UI.Info("This tool will guide you through setting up your homelab environment")
-	m.ctx.UI.Info("on UBlue uCore (immutable Fedora with rpm-ostree).")
+	m.ctx.UI.Info("Select an option:")
 	fmt.Println()
 
-	// Setup Options
-	cyan.Println(strings.Repeat("-", 70))
-	m.ctx.UI.Info("Setup Options:")
-	cyan.Println(strings.Repeat("-", 70))
+	bold.Println("  [1] NFS Management Tool")
+	bold.Println("  [2] WireGuard Management Tool")
+	bold.Println("  [3] Network Troubleshooting Suite")
+	bold.Println("  [4] Factory Reset / Legacy Setup")
 	fmt.Println()
-
-	bold.Print("  [A] ")
-	fmt.Println("Run All Steps (Complete Setup)")
-
-	bold.Print("  [Q] ")
-	fmt.Println("Quick Setup (Skip WireGuard)")
-	fmt.Println()
-
-	// Individual Steps
-	cyan.Println(strings.Repeat("-", 70))
-	m.ctx.UI.Info("Individual Steps:")
-	cyan.Println(strings.Repeat("-", 70))
-	fmt.Println()
-
-	steps := GetAllSteps()
-
-	for i, step := range steps {
-		// Check step status
-		status := "  "
-		if m.ctx.Config.IsComplete(step.MarkerName) {
-			status = green.Sprint("✓")
-		}
-
-		bold.Printf("  [%d] ", i)
-		fmt.Printf("%s %s\n", status, step.Name)
-		fmt.Printf("      → %s\n", step.Description)
-		fmt.Println()
-	}
-
-	// Other Options
-	cyan.Println(strings.Repeat("-", 70))
-	m.ctx.UI.Info("Other Options:")
-	cyan.Println(strings.Repeat("-", 70))
-	fmt.Println()
-
-	bold.Print("  [T] ")
-	fmt.Println("Troubleshooting Tool")
-
-	bold.Print("  [S] ")
-	fmt.Println("Show Setup Status")
-
-	bold.Print("  [P] ")
-	fmt.Println("Add WireGuard Peer")
-
-	bold.Print("  [R] ")
-	fmt.Println("Reset Setup (Clear markers)")
-
-	bold.Print("  [H] ")
-	fmt.Println("Help")
-
-	bold.Print("  [X] ")
-	fmt.Println("Exit")
+	bold.Println("  [H] Help")
+	bold.Println("  [X] Exit")
 	fmt.Println()
 }
 
 // handleChoice processes the user's menu choice
 func (m *Menu) handleChoice(choice string) error {
 	switch choice {
-	case "A":
-		return m.runAllSteps(false)
-	case "Q":
-		return m.runAllSteps(true)
-	case "0", "1", "2", "3", "4", "5", "6":
-		return m.runIndividualStep(choice)
-	case "T":
-		return m.runTroubleshoot()
-	case "S":
-		return m.showStatus()
-	case "P":
-		return m.addWireGuardPeer()
-	case "R":
-		return m.resetSetup()
+	case "1":
+		return m.runNFSManagement()
+	case "2":
+		return m.runWireGuardManagement()
+	case "3":
+		return m.runTroubleshooting()
+	case "4":
+		return m.runLegacySetup()
 	case "H":
 		return m.showHelp()
 	case "X":
@@ -159,69 +104,164 @@ func (m *Menu) handleChoice(choice string) error {
 	}
 }
 
-// runAllSteps runs all setup steps
-func (m *Menu) runAllSteps(skipWireGuard bool) error {
-	clearScreen()
-	m.ctx.UI.Header("Running Complete Setup")
-
-	if skipWireGuard {
-		m.ctx.UI.Info("WireGuard will be skipped")
-	}
-
-	err := RunAll(m.ctx, skipWireGuard)
-
-	fmt.Println()
-	m.ctx.UI.Info("Press Enter to return to menu...")
-	_, _ = fmt.Scanln()
-
-	return err
+// runNFSManagement runs the NFS setup step
+func (m *Menu) runNFSManagement() error {
+	// Currently just links to the existing NFS setup step
+	// Could be expanded to a submenu in the future
+	return m.runStepWrapper("nfs", "NFS Setup")
 }
 
-// runIndividualStep runs a single setup step
-func (m *Menu) runIndividualStep(choice string) error {
-	steps := GetAllSteps()
-	stepIndex := int(choice[0] - '0')
+// runWireGuardManagement runs the WireGuard management submenu
+func (m *Menu) runWireGuardManagement() error {
+	for {
+		clearScreen()
+		m.ctx.UI.Header("WireGuard Management")
 
-	if stepIndex < 0 || stepIndex >= len(steps) {
-		return fmt.Errorf("invalid step number: %s", choice)
+		fmt.Println("  [1] Run WireGuard Setup (Configure Server)")
+		fmt.Println("  [2] Add WireGuard Peer")
+		fmt.Println("  [B] Back")
+		fmt.Println()
+
+		choice, err := m.ctx.UI.PromptInput("Enter your choice", "")
+		if err != nil {
+			return err
+		}
+
+		switch strings.ToUpper(strings.TrimSpace(choice)) {
+		case "1":
+			if err := m.runStepWrapper("wireguard", "WireGuard Setup"); err != nil {
+				m.ctx.UI.Error(err.Error())
+				m.waitEnter()
+			}
+		case "2":
+			clearScreen()
+			m.ctx.UI.Header("Add WireGuard Peer")
+			if err := AddWireGuardPeer(m.ctx, nil); err != nil {
+				m.ctx.UI.Error(err.Error())
+			}
+			m.waitEnter()
+		case "B":
+			return nil
+		default:
+			m.ctx.UI.Error("Invalid choice")
+			m.waitEnter()
+		}
 	}
-
-	step := steps[stepIndex]
-
-	clearScreen()
-	m.ctx.UI.Header(fmt.Sprintf("Step %d: %s", stepIndex, step.Name))
-
-	err := RunStep(m.ctx, step.ShortName)
-
-	fmt.Println()
-	m.ctx.UI.Info("Press Enter to return to menu...")
-	_, _ = fmt.Scanln()
-
-	return err
 }
 
-// runTroubleshoot runs the troubleshooting tool
-func (m *Menu) runTroubleshoot() error {
+// runTroubleshooting runs the troubleshooting tool
+func (m *Menu) runTroubleshooting() error {
 	clearScreen()
-	m.ctx.UI.Header("Troubleshooting Tool")
-
-	m.ctx.UI.Warning("Troubleshooting tool not yet implemented in Go version")
-	m.ctx.UI.Info("For now, please use: /usr/share/home-lab-setup-scripts/scripts/troubleshoot.sh")
-
-	fmt.Println()
-	m.ctx.UI.Info("Press Enter to return to menu...")
-	_, _ = fmt.Scanln()
-
+	if err := troubleshoot.Run(m.ctx.Config, m.ctx.UI); err != nil {
+		return err
+	}
+	m.waitEnter()
 	return nil
 }
 
-func (m *Menu) addWireGuardPeer() error {
+// runLegacySetup runs the legacy setup menu with triple confirmation
+func (m *Menu) runLegacySetup() error {
 	clearScreen()
-	m.ctx.UI.Header("Add WireGuard Peer")
-	err := AddWireGuardPeer(m.ctx, nil)
-	m.ctx.UI.Print("")
+	m.ctx.UI.Header("Factory Reset / Legacy Setup")
+	m.ctx.UI.Warning("DANGER: This menu contains legacy setup steps that may overwrite configuration.")
+	m.ctx.UI.Warning("These steps are intended for initial factory setup or full resets.")
+	fmt.Println()
+
+	// Triple confirmation
+	for i := 1; i <= 3; i++ {
+		confirm, err := m.ctx.UI.PromptYesNo(fmt.Sprintf("Are you sure you want to proceed? (%d/3)", i), false)
+		if err != nil {
+			return err
+		}
+		if !confirm {
+			m.ctx.UI.Info("Operation cancelled.")
+			m.waitEnter()
+			return nil
+		}
+	}
+
+	return m.showLegacyMenu()
+}
+
+// showLegacyMenu displays the legacy setup menu
+func (m *Menu) showLegacyMenu() error {
+	for {
+		clearScreen()
+		m.ctx.UI.Header("Legacy Setup Menu")
+		m.ctx.UI.Warning("Warning: These steps modify system configuration.")
+		fmt.Println()
+
+		fmt.Println("  [1] Run All Legacy Steps")
+		fmt.Println("  [2] User Setup")
+		fmt.Println("  [3] Directory Setup")
+		fmt.Println("  [4] Container Setup")
+		fmt.Println("  [5] Service Deployment")
+		fmt.Println("  [6] Reset Setup Markers")
+		fmt.Println("  [7] Show Setup Status")
+		fmt.Println("  [B] Back to Main Menu")
+		fmt.Println()
+
+		choice, err := m.ctx.UI.PromptInput("Enter your choice", "")
+		if err != nil {
+			return err
+		}
+
+		var errOp error
+		switch strings.ToUpper(strings.TrimSpace(choice)) {
+		case "1":
+			errOp = m.runAllLegacySteps()
+		case "2":
+			errOp = m.runStepWrapper("user", "User Setup")
+		case "3":
+			errOp = m.runStepWrapper("directory", "Directory Setup")
+		case "4":
+			errOp = m.runStepWrapper("container", "Container Setup")
+		case "5":
+			errOp = m.runStepWrapper("deployment", "Service Deployment")
+		case "6":
+			errOp = m.resetSetup()
+		case "7":
+			errOp = m.showStatus()
+		case "B":
+			return nil
+		default:
+			m.ctx.UI.Error("Invalid choice")
+			m.waitEnter()
+			continue
+		}
+
+		if errOp != nil {
+			m.ctx.UI.Error(errOp.Error())
+			m.waitEnter()
+		}
+	}
+}
+
+// runStepWrapper runs a single setup step with header and pause
+func (m *Menu) runStepWrapper(stepName, displayName string) error {
+	clearScreen()
+	m.ctx.UI.Header(displayName)
+
+	err := RunStep(m.ctx, stepName)
+
+	fmt.Println()
 	m.ctx.UI.Info("Press Enter to return to menu...")
 	_, _ = fmt.Scanln()
+
+	return err
+}
+
+// runAllLegacySteps runs all legacy steps in order
+func (m *Menu) runAllLegacySteps() error {
+	clearScreen()
+	m.ctx.UI.Header("Running Complete Legacy Setup")
+	m.ctx.UI.Info("Note: WireGuard is skipped in this flow (use Main Menu > WireGuard Management)")
+
+	// RunAll handles: preflight, user, directory, (wireguard skipped), nfs, container, deployment
+	// We pass true to skipWireGuard
+	err := RunAll(m.ctx, true)
+
+	m.waitEnter()
 	return err
 }
 
@@ -258,16 +298,7 @@ func (m *Menu) showStatus() error {
 		m.ctx.UI.Infof("Configuration file: %s", m.ctx.Config.FilePath())
 	}
 
-	// Show marker directory
-	markerDir := m.ctx.Config.MarkerDir()
-	if _, err := os.Stat(markerDir); err == nil {
-		m.ctx.UI.Infof("Marker directory: %s", markerDir)
-	}
-
-	fmt.Println()
-	m.ctx.UI.Info("Press Enter to return to menu...")
-	_, _ = fmt.Scanln()
-
+	m.waitEnter()
 	return nil
 }
 
@@ -280,16 +311,14 @@ func (m *Menu) resetSetup() error {
 	m.ctx.UI.Warning("Configuration file will NOT be deleted")
 	fmt.Println()
 
-	confirm, err := m.ctx.UI.PromptYesNo("Are you sure you want to reset?", false)
+	confirm, err := m.ctx.UI.PromptYesNo("Are you sure you want to reset markers?", false)
 	if err != nil {
 		return err
 	}
 
 	if !confirm {
 		m.ctx.UI.Info("Reset cancelled")
-		fmt.Println()
-		m.ctx.UI.Info("Press Enter to return to menu...")
-		_, _ = fmt.Scanln()
+		m.waitEnter()
 		return nil
 	}
 
@@ -298,13 +327,15 @@ func (m *Menu) resetSetup() error {
 	}
 
 	m.ctx.UI.Success("All completion markers have been cleared")
-	m.ctx.UI.Info("You can now run the setup steps again")
+	m.waitEnter()
 
+	return nil
+}
+
+func (m *Menu) waitEnter() {
 	fmt.Println()
 	m.ctx.UI.Info("Press Enter to return to menu...")
 	_, _ = fmt.Scanln()
-
-	return nil
 }
 
 // showHelp displays help information
@@ -313,77 +344,33 @@ func (m *Menu) showHelp() error {
 	m.ctx.UI.Header("Help")
 
 	help := `
-UBlue uCore Homelab Setup - Help
+UBlue uCore Homelab Setup & Management
 
-This setup tool configures your homelab environment on UBlue uCore, an
-immutable Fedora-based operating system that uses rpm-ostree for updates.
+MAIN OPTIONS:
 
-SETUP WORKFLOW:
+  1. NFS Management Tool
+     - Configure NFS client connections and mounts.
 
-  The setup process consists of these steps:
+  2. WireGuard Management Tool
+     - Configure WireGuard VPN server.
+     - Add new peers (clients).
 
-  0. Pre-flight Check
-     - Verifies system requirements
-     - Checks for required packages
-     - Detects pre-existing configurations
+  3. Network Troubleshooting Suite
+     - Ping check (File Server).
+     - DNS diagnostics.
+     - Port scanning (VPS/Portainer).
 
-  1. User Setup
-     - Configures user account for containers
-     - Sets up groups and permissions
-     - Detects UID/GID and timezone
+  4. Factory Reset / Legacy Setup (Advanced)
+     - Access original setup steps (User, Directory, Container, Deployment).
+     - Use this for initial setup or resetting the environment.
+     - Requires triple confirmation.
 
-  2. Directory Setup
-     - Creates base homelab directory structure
-     - Sets up configuration and data directories
-     - Configures proper ownership and permissions
-
-  3. WireGuard Setup (Optional)
-     - Configures VPN server
-     - Generates keys
-     - Sets up peer connections
-
-  4. NFS Setup
-     - Configures network storage mounts
-     - Sets up systemd mount units
-     - Verifies connectivity
-
-  5. Container Setup
-     - Copies compose templates
-     - Configures environment variables
-     - Creates .env files
-
-  6. Service Deployment
-     - Enables systemd services
-     - Pulls container images
-     - Starts all services
-
-RECOMMENDED APPROACH:
-
-  For first-time setup, use option [A] "Run All Steps" or [Q] for
-  "Quick Setup" (skips WireGuard).
-
-  If a step fails, you can re-run just that step using the individual
-  step options (0-6).
-
-CONFIGURATION FILES:
-
-	Configuration: ~/.homelab-setup.conf
-	Markers: ~/.local/homelab-setup/
-
-AUTOMATION NOTES:
-
-	The Go helper focuses on the interactive menu. For quick re-runs,
-	you can call individual steps from the menu or re-run "Run All" with
-	or without WireGuard. Non-interactive flags from the legacy bash
-	scripts are intentionally omitted to keep this tool simple for
-	single-user homelab installs.
-
-For more information, see the project README.
+DOCUMENTATION:
+  For more information, see the project documentation or README.
 `
 
 	fmt.Println(help)
-	m.ctx.UI.Info("Press Enter to return to menu...")
-	_, _ = fmt.Scanln()
+	m.waitEnter()
 
 	return nil
 }

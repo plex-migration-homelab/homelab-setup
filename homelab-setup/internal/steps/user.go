@@ -26,8 +26,12 @@ func promptForUser(ui *ui.UI) (string, error) {
 	ui.Info(fmt.Sprintf("Current user: %s (UID: %s, GID: %s)", currentUser.Username, currentUser.Uid, currentUser.Gid))
 	ui.Print("")
 
-	// Prompt for username with current user as default
-	username, err := ui.PromptInput("Enter homelab username (or press Enter to use current user)", currentUser.Username)
+	// Suggest dockeruser as the default for compatibility
+	defaultUser := "dockeruser"
+	ui.Info(fmt.Sprintf("Recommended user: %s", defaultUser))
+
+	// Prompt for username with dockeruser as default
+	username, err := ui.PromptInput(fmt.Sprintf("Enter homelab username (default: %s)", defaultUser), defaultUser)
 	if err != nil {
 		return "", fmt.Errorf("failed to prompt for username: %w", err)
 	}
@@ -399,19 +403,10 @@ func RunUserSetup(cfg *config.Config, ui *ui.UI) error {
 	ui.Info("Configuring user account for homelab services...")
 	ui.Print("")
 
-	// Prompt for username
+	// Enforce dockeruser
 	ui.Step("Select Homelab User")
-	username, err := getConfiguredUsername(cfg, ui)
-	if err != nil {
-		return fmt.Errorf("failed to read configured username: %w", err)
-	}
-
-	if username == "" {
-		username, err = promptForUser(ui)
-		if err != nil {
-			return fmt.Errorf("failed to get username: %w", err)
-		}
-	}
+	username := "dockeruser"
+	ui.Infof("Enforcing standard homelab user: %s", username)
 
 	// Validate or create user
 	ui.Step("Validating User Account")
