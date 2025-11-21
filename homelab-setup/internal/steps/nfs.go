@@ -136,6 +136,37 @@ func promptForNFSDetails(cfg *config.Config, ui *ui.UI) (host, export, mountPoin
 	return host, export, mountPoint, nil
 }
 
+// promptForAdditionalMount prompts for an additional export/mount point pair from the same NFS server
+func promptForAdditionalMount(ui *ui.UI, host string) (export, mountPoint string, err error) {
+	ui.Print("")
+	ui.Infof("Configure an additional NFS mount from server: %s", host)
+	ui.Print("")
+
+	// Prompt for export path
+	export, err = ui.PromptInput("NFS export path (e.g., /mnt/storage/nextcloud)", "/mnt/storage")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to prompt for NFS export: %w", err)
+	}
+
+	// Validate export path (use ValidateSafePath to prevent command injection)
+	if err := common.ValidateSafePath(export); err != nil {
+		return "", "", fmt.Errorf("invalid export path: %w", err)
+	}
+
+	// Prompt for mount point
+	mountPoint, err = ui.PromptInput("Local mount point", "/mnt/nas-nextcloud")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to prompt for mount point: %w", err)
+	}
+
+	// Validate mount point (use ValidateSafePath to prevent command injection)
+	if err := common.ValidateSafePath(mountPoint); err != nil {
+		return "", "", fmt.Errorf("invalid mount point: %w", err)
+	}
+
+	return export, mountPoint, nil
+}
+
 // validateNFSConnection validates the NFS server is accessible and exports are available
 func validateNFSConnection(cfg *config.Config, ui *ui.UI, host string) error {
 	ui.Infof("Testing connection to NFS server %s...", host)
@@ -652,12 +683,111 @@ func RunNFSSetup(cfg *config.Config, ui *ui.UI) error {
 		return fmt.Errorf("failed to save real mount point: %w", err)
 	}
 
+	// Track all configured mounts for summary
+	type mountInfo struct {
+		export     string
+		mountPoint string
+	}
+	configuredMounts := []mountInfo{{export: export, mountPoint: mountPoint}}
+	mountCount := 1
+
+	// Loop to configure additional mounts from the same server
+	for {
+		ui.Print("")
+		ui.Separator()
+		ui.Success("✓ NFS mount configured successfully")
+		ui.Infof("Export: %s", export)
+		ui.Infof("Mount Point: %s", mountPoint)
+		ui.Print("")
+
+		// Ask if they want to add another mount
+		addAnother, err := ui.PromptYesNo("Do you want to add another mount from this NFS server?", false)
+		if err != nil {
+			return fmt.Errorf("failed to prompt for additional mount: %w", err)
+		}
+
+		if !addAnother {
+			break
+		}
+
+		// Prompt for additional mount details
+		export, mountPoint, err = promptForAdditionalMount(ui, host)
+		if err != nil {
+			return fmt.Errorf("failed to get additional mount details: %w", err)
+		}
+
+		// Validate export path exists on server
+		ui.Step("Verifying Export Path")
+		if err := validateNFSExport(cfg, ui, host, export); err != nil {
+			return fmt.Errorf("export path verification failed: %w", err)
+		}
+
+		// Create mount point
+		ui.Step("Creating Mount Point")
+		if err := createMountPoint(cfg, ui, mountPoint); err != nil {
+			return fmt.Errorf("failed to create mount point: %w", err)
+		}
+
+		// Migrate legacy systemd mount units if they exist
+		ui.Step("Migrating Legacy Mount Units")
+		migrateSystemdMountToFstab(cfg, ui, mountPoint)
+
+		// Create fstab entry and mount
+		ui.Step("Configuring fstab Mount")
+		if err := createFstabEntry(cfg, ui, host, export, mountPoint); err != nil {
+			return fmt.Errorf("failed to create fstab entry: %w", err)
+		}
+
+		// Save additional mount configuration with indexed keys
+		// Note: mountCount is still 1 for the second mount, 2 for the third, etc.
+		// This creates keys: NFS_MOUNT_1_EXPORT (second mount), NFS_MOUNT_2_EXPORT (third mount), etc.
+		ui.Step("Saving Configuration")
+		exportKey := fmt.Sprintf("NFS_MOUNT_%d_EXPORT", mountCount)
+		mountPointKey := fmt.Sprintf("NFS_MOUNT_%d_MOUNTPOINT", mountCount)
+		realMountPointKey := fmt.Sprintf("NFS_MOUNT_%d_MOUNTPOINT_REAL", mountCount)
+
+		if err := cfg.Set(exportKey, export); err != nil {
+			return fmt.Errorf("failed to save export: %w", err)
+		}
+
+		if err := cfg.Set(mountPointKey, mountPoint); err != nil {
+			return fmt.Errorf("failed to save mount point: %w", err)
+		}
+
+		// Resolve symlinks for the additional mount
+		realMountPoint, _ := system.ResolveRealPath(mountPoint)
+		if realMountPoint != mountPoint {
+			ui.Infof("Resolved real mount point: %s -> %s", mountPoint, realMountPoint)
+		}
+
+		if err := cfg.Set(realMountPointKey, realMountPoint); err != nil {
+			return fmt.Errorf("failed to save real mount point: %w", err)
+		}
+
+		// Track this mount for summary
+		configuredMounts = append(configuredMounts, mountInfo{export: export, mountPoint: mountPoint})
+
+		// Increment mount count AFTER saving (so second mount uses index 1, not 2)
+		mountCount++
+	}
+
+	// Save total mount count
+	if err := cfg.Set(config.KeyNFSMountCount, fmt.Sprintf("%d", mountCount)); err != nil {
+		return fmt.Errorf("failed to save mount count: %w", err)
+	}
+
+	// Final summary
 	ui.Print("")
 	ui.Separator()
 	ui.Success("✓ NFS configuration completed")
 	ui.Infof("Server: %s", host)
-	ui.Infof("Export: %s", export)
-	ui.Infof("Mount Point: %s", mountPoint)
+	ui.Infof("Total mounts configured: %d", mountCount)
+	ui.Print("")
+	for i, mount := range configuredMounts {
+		ui.Infof("Mount %d:", i+1)
+		ui.Infof("  Export: %s", mount.export)
+		ui.Infof("  Mount Point: %s", mount.mountPoint)
+	}
 
 	// Create completion marker
 	if err := cfg.MarkComplete(nfsCompletionMarker); err != nil {

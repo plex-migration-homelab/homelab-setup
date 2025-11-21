@@ -17,6 +17,7 @@ const (
 	KeyNFSMountPoint     = "NFS_MOUNT_POINT"      // User-friendly mount point (may be symlink)
 	KeyNFSMountPointReal = "NFS_MOUNT_POINT_REAL" // Actual resolved mount point (for systemd)
 	KeyNFSMountOptions   = "NFS_MOUNT_OPTIONS"
+	KeyNFSMountCount     = "NFS_MOUNT_COUNT" // Number of NFS mounts configured (first mount uses keys above, additional use indexed keys)
 
 	// WireGuard configuration
 	KeyWGInterface   = "WG_INTERFACE"
