@@ -137,9 +137,9 @@ func promptForNFSDetails(cfg *config.Config, ui *ui.UI) (host, export, mountPoin
 }
 
 // promptForAdditionalMount prompts for an additional export/mount point pair from the same NFS server
-func promptForAdditionalMount(cfg *config.Config, ui *ui.UI, host string) (export, mountPoint string, err error) {
+func promptForAdditionalMount(ui *ui.UI, host string) (export, mountPoint string, err error) {
 	ui.Print("")
-	ui.Info("Configure an additional NFS mount from the same server")
+	ui.Infof("Configure an additional NFS mount from server: %s", host)
 	ui.Print("")
 
 	// Prompt for export path
@@ -711,7 +711,7 @@ func RunNFSSetup(cfg *config.Config, ui *ui.UI) error {
 		}
 
 		// Prompt for additional mount details
-		export, mountPoint, err = promptForAdditionalMount(cfg, ui, host)
+		export, mountPoint, err = promptForAdditionalMount(ui, host)
 		if err != nil {
 			return fmt.Errorf("failed to get additional mount details: %w", err)
 		}
@@ -738,10 +738,9 @@ func RunNFSSetup(cfg *config.Config, ui *ui.UI) error {
 			return fmt.Errorf("failed to create fstab entry: %w", err)
 		}
 
-		// Increment mount count
-		mountCount++
-
 		// Save additional mount configuration with indexed keys
+		// Note: mountCount is still 1 for the second mount, 2 for the third, etc.
+		// This creates keys: NFS_MOUNT_1_EXPORT (second mount), NFS_MOUNT_2_EXPORT (third mount), etc.
 		ui.Step("Saving Configuration")
 		exportKey := fmt.Sprintf("NFS_MOUNT_%d_EXPORT", mountCount)
 		mountPointKey := fmt.Sprintf("NFS_MOUNT_%d_MOUNTPOINT", mountCount)
@@ -767,6 +766,9 @@ func RunNFSSetup(cfg *config.Config, ui *ui.UI) error {
 
 		// Track this mount for summary
 		configuredMounts = append(configuredMounts, mountInfo{export: export, mountPoint: mountPoint})
+
+		// Increment mount count AFTER saving (so second mount uses index 1, not 2)
+		mountCount++
 	}
 
 	// Save total mount count
